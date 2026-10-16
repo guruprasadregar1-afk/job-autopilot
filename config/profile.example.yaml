@@ -1,0 +1,165 @@
+# Candidate Profile Facts - Example Configuration Template
+# Fill in with your candidate details before running the automation.
+
+personal:
+  full_name: "YOUR_NAME"
+  email: "YOUR_EMAIL"
+  phone: "YOUR_PHONE"
+  current_location: "YOUR_LOCATION"
+  current_city: "YOUR_CITY"
+  current_country: "YOUR_COUNTRY"
+  postal_code: "YOUR_PIN"
+  portfolio_url: "YOUR_PORTFOLIO_URL"
+  linkedin_url: "DO NOT USE"
+
+experience:
+  total_years: 4.5
+  current_role: "Senior Full Stack Developer (MERN)"
+  current_company: "YOUR_COMPANY"
+  start_date: "Oct 2022"
+  end_date: "Present"
+
+skills:
+  frontend:
+    - "React.js"
+    - "Next.js"
+    - "Redux"
+    - "Angular"
+    - "Micro-Frontend Architecture"
+    - "HTML5"
+    - "CSS3"
+    - "Bootstrap"
+    - "Responsive Design"
+  backend:
+    - "Node.js"
+    - "Express.js"
+    - "NestJS"
+    - "RESTful API Design"
+    - "MVC Architecture"
+    - "WebSockets (Real-time)"
+  databases:
+    - "MongoDB"
+    - "PostgreSQL"
+    - "MySQL"
+  cloud_devops:
+    - "AWS (EC2, S3)"
+    - "Application Deployment"
+    - "CI/CD Pipelines"
+    - "Server Management"
+    - "GitHub"
+    - "Bitbucket"
+  blockchain_web3:
+    - "Web3 API Integration"
+    - "NFT Platform Development"
+    - "Blockchain Application Architecture"
+  payments:
+    - "Stripe"
+    - "PayPal"
+    - "Cryptomus"
+    - "Coingate"
+  languages:
+    - "JavaScript (ES6+)"
+    - "TypeScript"
+    - "Go (Gin, learning)"
+  tools:
+    - "Postman"
+    - "Linux"
+    - "Windows"
+  spoken_languages:
+    - language: "English"
+      proficiency: "Professional"
+    - language: "Hindi"
+      proficiency: "Native"
+
+server_management_note: "started project services, fixed server errors, and resolved a compromised (hacked) server"
+
+used_in_projects:
+  - skill: "Python"
+    project: "Advanced AI Chat Platform"
+  - skill: "LLM APIs"
+    project: "Advanced AI Chat Platform"
+  - skill: "Algolia"
+    project: "Henri-Lloyd – E-commerce"
+  - skill: "Laravel"
+    project: "LearnIIPlus – E-Learning (one project only)"
+
+projects:
+  - name: "Advanced AI Chat Platform"
+    role: "Frontend / AI Integration"
+    stack: ["React.js", "Redux", "Python", "LLM APIs"]
+    description: "ChatGPT-like platform with real-time streaming, multi-turn conversation management, and custom UI components."
+  - name: "NakaToken – NFT & Blockchain"
+    role: "Full Stack Developer"
+    stack: ["React.js", "Node.js", "Express.js", "MongoDB", "Web3"]
+    description: "Full NFT marketplace with wallet integration, on-chain asset management, and blockchain transaction handling."
+  - name: "Endless Domains – Digital Assets"
+    role: "Full Stack Developer"
+    stack: ["Next.js", "NestJS", "PostgreSQL", "Blockchain", "AWS"]
+    description: "Domain/digital asset trading platform with complex state management and cloud infrastructure."
+  - name: "Henri-Lloyd – E-commerce"
+    role: "Frontend Developer"
+    stack: ["React.js", "Redux", "Algolia"]
+    description: "Global premium brand e-commerce platform with advanced search, product filtering, and cart/checkout flows."
+  - name: "LearnIIPlus – E-Learning"
+    role: "Full Stack Developer"
+    stack: ["React.js", "Node.js", "MongoDB", "MySQL", "Laravel"]
+    description: "UK-based e-learning platform with course management, student progress tracking, and payment integration."
+  - name: "MyBeautySquad – Mobile & Web"
+    role: "Full Stack Developer"
+    stack: ["React.js", "Angular", "Node.js", "MongoDB"]
+    description: "Booking and marketplace platform for beauty professionals with admin dashboard and mobile-responsive web app."
+  - name: "Loud Market – NFT Marketplace"
+    role: "Full Stack Developer"
+    stack: ["React.js", "Node.js", "Angular", "MongoDB", "Blockchain"]
+    description: "Multi-chain NFT trading platform with auction mechanics and wallet connectivity."
+  - name: "Digital Title Platform"
+    role: "Full Stack Developer"
+    stack: ["React.js", "Node.js", "Express.js", "MongoDB", "Blockchain"]
+    description: "Blockchain-based digital ownership and title registry system."
+
+compensation_and_notice:
+  current_ctc_inr: YOUR_CTC
+  expected_ctc_inr: YOUR_EXPECTED_CTC
+  notice_period_days: 60
+  notice_period_negotiable: true
+
+education:
+  - degree: "Master of Computer Applications (MCA)"
+    institution: "YOUR_INSTITUTION"
+    graduation_year: 2021
+  - degree: "Bachelor of Computer Applications (BCA)"
+    institution: "YOUR_INSTITUTION"
+    graduation_year: 2016
+
+preferences:
+  target_locations_india:
+    - "Bengaluru"
+    - "Pune"
+    - "Hyderabad"
+    - "Gurgaon"
+    - "Noida"
+    - "Jaipur"
+  target_locations_international:
+    - "EU"
+    - "UAE"
+  work_modes:
+    - "Remote"
+    - "Hybrid"
+    - "Onsite"
+  employment_types:
+    - "Full-time"
+    - "Contract"
+  target_titles_include:
+    - "Senior Full Stack Developer"
+    - "Senior React Developer"
+    - "Senior Node.js Developer"
+    - "MERN Stack Developer"
+    - "Full Stack Engineer"
+    - "Full Stack Developer"
+    - "Senior Frontend Developer"
+    - "Senior Backend Developer"
+  target_titles_exclude: []
+  company_blacklist: []
+
+resume:
+  selected_filename: "YOUR_RESUME.pdf"

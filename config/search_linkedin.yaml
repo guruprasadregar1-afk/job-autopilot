@@ -1,0 +1,43 @@
+# LinkedIn Search Configurations
+platform: "linkedin"
+
+searches:
+  - keywords: "Senior Full Stack Developer"
+    location: "India"
+    f_AL: true                # Easy Apply only (provided by user)
+    f_WT: "1,2,3"             # On-site (1), Remote (2), Hybrid (3) (provided by user)
+    f_TPR: "r604800"          # added by agent (past week)
+    f_E: "4"                  # added by agent (Mid-Senior level)
+
+  - keywords: "Full Stack Engineer"
+    location: "India"
+    f_AL: true                # Easy Apply only (provided by user)
+    f_WT: "1,2,3"             # On-site (1), Remote (2), Hybrid (3) (provided by user)
+    f_TPR: "r604800"          # added by agent (past week)
+    f_E: "4"                  # added by agent (Mid-Senior level)
+
+  - keywords: "Senior React Node Developer"
+    location: "India"
+    f_AL: true                # Easy Apply only (provided by user)
+    f_WT: "1,2,3"             # On-site (1), Remote (2), Hybrid (3) (provided by user)
+    f_TPR: "r604800"          # added by agent (past week)
+    f_E: "4"                  # added by agent (Mid-Senior level)
+
+  - keywords: "MERN Stack Developer"
+    location: "India"
+    f_AL: true                # Easy Apply only (provided by user)
+    f_WT: "1,2,3"             # On-site (1), Remote (2), Hybrid (3) (provided by user)
+    f_TPR: "r604800"          # added by agent (past week)
+    f_E: "4"                  # added by agent (Mid-Senior level)
+
+  - keywords: "Full Stack Developer"
+    location: "United Arab Emirates"
+    disabled: true            # disabled by user decision
+    f_AL: true                # Easy Apply only (provided by user)
+    f_TPR: "r604800"          # added by agent (past week)
+
+  - keywords: "Full Stack Developer"
+    location: "European Union"
+    disabled: true            # disabled by user decision
+    f_AL: true                # Easy Apply only (provided by user)
+    f_TPR: "r604800"          # added by agent (past week)

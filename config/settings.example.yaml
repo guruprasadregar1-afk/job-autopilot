@@ -1,0 +1,44 @@
+# Application & Automation Settings - Example Configuration Template
+# Copy to config/settings.yaml and update paths and caps as appropriate.
+
+caps:
+  linkedin_daily_cap: 25        # user specified
+  naukri_daily_cap: 40          # user specified
+  attempts_per_day: 25          # user specified (default 25 per platform across all runs)
+
+search:
+  max_pages_per_run: 1          # user specified (1 page limit)
+  max_jobs_per_platform: 10     # user specified (at most 10 jobs per platform)
+
+timing:
+  working_hours:
+    enabled: true
+    start: "09:00"              # user specified
+    end: "18:00"                # user specified
+    timezone: "Asia/Kolkata"    # IST (UTC+05:30)
+  action_delay_min: 2           # user specified (seconds)
+  action_delay_max: 6           # user specified (seconds)
+  job_delay_min: 30             # user specified (seconds)
+  job_delay_max: 90             # user specified (seconds)
+  max_session_minutes: 120
+
+safety:
+  max_consecutive_failures: 3
+  stop_on_captcha: true
+  stop_on_login_wall: true
+  stop_on_unusual_activity: true
+
+llm:
+  cli_command: "claude.cmd"
+  models:
+    matcher: "haiku"                # documented alias for latest Haiku
+    answerer: "sonnet"              # documented alias for latest Sonnet
+  timeout_seconds: 60
+  match_score_threshold: 65
+
+paths:
+  resume: "YOUR_RESUME.pdf"
+  database: "data/jobs.db"
+  browser_profile: "browser_profile"
+  llm_sandbox: "llm_sandbox"
+  snapshots: "docs/snapshots"

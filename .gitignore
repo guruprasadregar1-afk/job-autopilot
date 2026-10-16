@@ -1,0 +1,54 @@
+# ==============================================================================
+# Git Ignore Rules for job-autopilot
+# Enforces strict privacy, zero credential leaks, and zero data leakage.
+# ==============================================================================
+
+# Virtual Environment & Python Caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Sensitive Browser Session & Playwright Profiles
+browser_profile/
+llm_sandbox/
+
+# Sensitive Database Files & Application Data
+data/*
+!data/.gitkeep
+*.db
+*.db-journal
+*.sqlite*
+data/dashboard.html
+
+# Application Run Logs
+logs/*
+!logs/.gitkeep
+*.log
+
+# Sensitive Screenshots and DOM Snapshots
+docs/snapshots/*
+!docs/snapshots/.gitkeep
+
+# Sensitive Resumes (all PDFs strictly excluded)
+resumes/*
+!resumes/.gitkeep
+*.pdf
+
+# Environment & Secret Files
+.env
+*.env
+.env.*
+
+# Real Personal Configuration Files
+config/profile.yaml
+config/answers.yaml
+config/settings.yaml
+
+# Always Track Safe Example Templates
+!config/*.example.yaml
+
+# Local Scratch Scripts & Temporary Files
+scratch/
+scratch_*.py
