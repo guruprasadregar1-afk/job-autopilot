@@ -139,3 +139,12 @@ answers:
       - "comfortable working onsite"
     value: "Yes"
     exact_match: true
+
+  # Relocation
+  - patterns:
+      - "are you willing to relocate"
+      - "are you open to relocation"
+      - "willing to relocate"
+    value: "Yes"
+    exact_match: true
+

@@ -55,4 +55,39 @@ def test_hard_reject_outside_india_restrictions():
         assert fit_res.score == 0
         assert fit_res.should_apply is False
         assert "outside india" in fit_res.reason.lower()
+def test_nationwide_india_locations_and_foreign_exclusions():
+    matcher = JobMatcher()
+    
+    # 1. Real Indian locations that MUST be accepted
+    accepted_locations = [
+        "Indore, Madhya Pradesh, India (On-site)",
+        "Gurugram, Haryana, India (On-site)",
+        "Ahmedabad, Gujarat, India (On-site)",
+        "Sumerpur, Rajasthan, India (On-site)",
+        "India (Remote)"
+    ]
+    for loc in accepted_locations:
+        rejected, reason = matcher.evaluate_hard_filters(
+            title="Senior Full Stack Developer",
+            company="Innovative Solutions India",
+            location=loc,
+            description="Leading MERN stack development."
+        )
+        assert rejected is False, f"Expected {loc} to be accepted, but got rejected: {reason}"
+        assert reason == ""
 
+    # 2. Real Foreign locations that MUST be rejected
+    rejected_locations = [
+        "United States (Remote)",
+        "Dubai, United Arab Emirates",
+        "Berlin, Germany"
+    ]
+    for loc in rejected_locations:
+        rejected, reason = matcher.evaluate_hard_filters(
+            title="Senior Full Stack Developer",
+            company="Global Tech",
+            location=loc,
+            description="Developing web applications."
+        )
+        assert rejected is True, f"Expected {loc} to be rejected, but got accepted"
+        assert "outside india" in reason.lower()

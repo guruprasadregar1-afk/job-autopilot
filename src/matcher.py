@@ -68,7 +68,9 @@ class JobMatcher:
             r"\bu\.s\. only\b",
             r"\bus residents? only\b",
             r"\bu\.s\. residents? only\b",
+            r"\beu only\b",
             r"\beu residents? only\b",
+            r"\buk only\b",
             r"\buk residents? only\b",
             r"\bcanada only\b",
             r"\bcanadian residents? only\b",
@@ -88,6 +90,9 @@ class JobMatcher:
             r"\bmust reside in the us\b",
             r"\bmust be based in the us\b",
             r"\bapplicants must be legally authorized to work in the us\b",
+            r"\bauthorized to work in canada\b",
+            r"\bright to work in the uk\b",
+            r"\bauthorized to work in the uk\b",
         ]
         for pat in outside_restrictions:
             m = re.search(pat, combined_text)
@@ -95,21 +100,60 @@ class JobMatcher:
                 matched_kw = m.group(0)
                 return True, f"Hard-rejected: Job restricts candidates to regions outside India ('{matched_kw}')."
 
-        # 4. Location Check (if location is provided)
+        # 4. Location Check (Accept anywhere in India or remote with India eligibility)
         if loc_lower:
-            allowed_locations = [loc.lower() for loc in prefs.get("target_locations_india", [])]
-            allowed_locations.extend([loc.lower() for loc in prefs.get("target_locations_international", [])])
+            indian_states_and_uts = {
+                "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
+                "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand", "karnataka",
+                "kerala", "madhya pradesh", "maharashtra", "manipur", "meghalaya",
+                "mizoram", "nagaland", "odisha", "punjab", "rajasthan", "sikkim",
+                "tamil nadu", "telangana", "tripura", "uttar pradesh", "uttarakhand",
+                "west bengal", "delhi", "new delhi", "chandigarh", "puducherry",
+                "jammu and kashmir", "ladakh", "andaman and nicobar", "dadra and nagar haveli",
+                "daman and diu", "lakshadweep"
+            }
+            major_indian_cities = {
+                "bengaluru", "bangalore", "hyderabad", "pune", "mumbai", "chennai",
+                "kolkata", "noida", "gurgaon", "gurugram", "ahmedabad", "jaipur",
+                "indore", "kochi", "cochin", "surat", "vadodara", "lucknow", "bhopal",
+                "visakhapatnam", "vizag", "coimbatore", "nagpur", "thiruvananthapuram",
+                "trivandrum", "bhubaneswar", "mysuru", "mysore", "mangalore", "mangaluru",
+                "chandigarh", "mohali", "panchkula", "ghaziabad", "faridabad", "navi mumbai",
+                "thane", "nashik", "aurangabad", "rajkot", "jodhpur", "udaipur", "sumerpur"
+            }
+            foreign_location_patterns = [
+                r"\bunited states\b", r"\bu\.s\.\b", r"\busa\b", r"\bu\.s\.a\.\b",
+                r"\bunited kingdom\b", r"\bu\.k\.\b", r"\buk\b",
+                r"\bgermany\b", r"\bberlin\b", r"\bmunich\b", r"\bfrankfurt\b",
+                r"\bcanada\b", r"\btoronto\b", r"\bvancouver\b",
+                r"\bdubai\b", r"\bunited arab emirates\b", r"\buae\b", r"\bu\.a\.e\.\b",
+                r"\baustralia\b", r"\bsydney\b", r"\bmelbourne\b",
+                r"\bsingapore\b", r"\bnetherlands\b", r"\bamsterdam\b",
+                r"\bpoland\b", r"\bswitzerland\b", r"\bireland\b", r"\bdublin\b",
+                r"\bfrance\b", r"\bparis\b", r"\bspain\b", r"\bmadrid\b"
+            ]
+
+            # Reject if location explicitly mentions a foreign country or city without India
+            is_foreign = any(re.search(pat, loc_lower) for pat in foreign_location_patterns)
+            if is_foreign and "india" not in loc_lower:
+                return True, f"Hard-rejected: Location '{location}' is outside India."
+
+            # Accept if in India (contains "india", state/UT, or major Indian city)
+            is_in_india = (
+                "india" in loc_lower
+                or any(st in loc_lower for st in indian_states_and_uts)
+                or any(city in loc_lower for city in major_indian_cities)
+            )
+
+            # Accept if remote with India eligibility (remote without foreign constraint)
             work_modes = [wm.lower() for wm in prefs.get("work_modes", [])]
-            if "remote" in work_modes:
-                allowed_locations.append("remote")
-            
-            # Check if any allowed location keyword is in the job location string
-            matches_location = any(al in loc_lower for al in allowed_locations)
-            # If location string is specified and does not match any preference or remote/India
-            if not matches_location and len(loc_lower.strip()) > 2:
-                # We do not strictly hard reject if it says remote in title
-                if "remote" not in title_lower:
-                    return True, f"Hard-rejected: Location '{location}' is outside target regions."
+            is_remote_eligible = (
+                ("remote" in work_modes or "remote" in loc_lower or "remote" in title_lower)
+                and not is_foreign
+            )
+
+            if not is_in_india and not is_remote_eligible and len(loc_lower.strip()) > 2:
+                return True, f"Hard-rejected: Location '{location}' is outside target regions (India)."
 
         return False, ""
 

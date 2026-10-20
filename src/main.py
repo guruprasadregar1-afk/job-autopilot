@@ -5,6 +5,18 @@ import csv
 from pathlib import Path
 from typing import Optional, Any
 
+# Ensure stdout and stderr flush immediately with line buffering
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -219,7 +231,8 @@ def run_pipeline(
     platform: str = "linkedin",
     is_rehearsal: bool = False,
     review_mode: bool = False,
-    browser_manager: Optional[Any] = None
+    browser_manager: Optional[Any] = None,
+    target_job_id: Optional[str] = None
 ):
     """
     Executes full job application pipeline:
@@ -237,7 +250,7 @@ def run_pipeline(
     """
     from src.platforms.linkedin import LinkedInCollector, LinkedInApplicant
     from src.platforms.naukri import NaukriCollector
-    from src.policy import OBSERVE_ONLY
+    from src.policy import OBSERVE_ONLY, BrowserClosedCleanStop, is_browser_closed_error
 
     effective_rehearsal = bool(is_rehearsal or OBSERVE_ONLY)
     mode_desc = "REHEARSAL (SUBMIT IMPOSSIBLE)" if effective_rehearsal else "LIVE (REVIEW MODE)"
@@ -257,42 +270,46 @@ def run_pipeline(
         review_mode=review_mode,
         is_rehearsal=effective_rehearsal
     )
-    li_collector = LinkedInCollector(db, guards, matcher)
+    li_collector = LinkedInCollector(db, guards, matcher, browser_manager=mgr)
     nk_collector = NaukriCollector(db, guards, matcher)
 
     try:
         max_jobs = guards.settings.get("search", {}).get("max_jobs_per_platform", 10)
 
         if platform in ("linkedin", "all"):
-            # 1. Process eligible FOUND jobs from DB first
+            # 1. Process eligible FOUND jobs from DB first (or specific target job)
             remaining_attempts = guards.max_attempts - guards.session_attempts_count
             if remaining_attempts > 0:
                 li_collector.process_eligible_found_jobs(
                     page,
                     applicant=applicant,
                     limit=remaining_attempts,
-                    is_rehearsal=effective_rehearsal
+                    is_rehearsal=effective_rehearsal,
+                    target_job_id=target_job_id
                 )
 
-            # 2. Search and apply for new jobs if attempts limit not reached
-            remaining_attempts = guards.max_attempts - guards.session_attempts_count
-            if remaining_attempts > 0:
-                li_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_linkedin.yaml", encoding="utf-8"))
-                for q in li_cfg.get("searches", [])[:1]:
-                    li_collector.run_search_and_apply(
-                        page,
-                        search_query=q,
-                        applicant=applicant,
-                        max_jobs=max_jobs,
-                        is_rehearsal=effective_rehearsal,
-                        dry_run=False
-                    )
+            # 2. Search and apply for new jobs if not targeting a single job and attempts limit not reached
+            if not target_job_id:
+                remaining_attempts = guards.max_attempts - guards.session_attempts_count
+                if remaining_attempts > 0:
+                    li_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_linkedin.yaml", encoding="utf-8"))
+                    for q in li_cfg.get("searches", [])[:1]:
+                        li_collector.run_search_and_apply(
+                            page,
+                            search_query=q,
+                            applicant=applicant,
+                            max_jobs=max_jobs,
+                            is_rehearsal=effective_rehearsal,
+                            dry_run=False
+                        )
 
         if platform in ("naukri", "all"):
             nk_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_naukri.yaml", encoding="utf-8"))
             for q in nk_cfg.get("searches", [])[:1]:
                 nk_collector.run_phase8a_search(page, q, max_jobs=max_jobs, dry_run=True)
 
+    except BrowserClosedCleanStop as e:
+        print("\n[STOP] Browser closed unexpectedly (see logs/browser_lifecycle.log). Saving state and exiting cleanly.")
     except UsageLimitReached as e:
         print(f"\n[USAGE LIMIT STOP] {e}")
         print("Exiting cleanly without retrying against quota. Run again after your quota resets.")
@@ -300,6 +317,12 @@ def run_pipeline(
         print(f"\n[FATAL RESUME HALT STOP] {e}")
     except (SafetyStopError, DailyCapReachedError, OutsideWorkingHoursError, SessionLimitExceededError, AttemptsLimitReachedError) as e:
         print(f"\n[SAFETY GUARD STOP] {e}")
+    except Exception as e:
+        from src.policy import is_browser_closed_error
+        if is_browser_closed_error(e):
+            print("\n[STOP] Browser closed unexpectedly (see logs/browser_lifecycle.log). Saving state and exiting cleanly.")
+        else:
+            raise
     finally:
         mgr.close()
         guards.print_attempts_summary()
@@ -336,6 +359,7 @@ def main():
     run_parser.add_argument("--auto", action="store_true", help="Submit automatically (requires 20 approved reviews)")
     run_parser.add_argument("--max-apply", type=int, default=None, help="Limit maximum applications for this session (can only lower daily cap)")
     run_parser.add_argument("--max-attempts", type=int, default=10, help="Limit maximum Easy Apply forms opened for this session (default: 10; can only lower hard limits)")
+    run_parser.add_argument("--job-id", type=str, default=None, help="Process only a single stored FOUND job by ID (refuses if not in DB)")
 
     dashboard_parser = subparsers.add_parser("dashboard", help="Generate or serve read-only Application History Dashboard")
     dashboard_parser.add_argument("--serve", action="store_true", help="Serve dashboard using standard library HTTP server bound to 127.0.0.1")
@@ -368,6 +392,15 @@ def main():
             if approvals < 20:
                 print(f"\n[AUTO LOCKED] --auto requires at least 20 approved applications in --review mode. Currently: {approvals}/20.")
                 sys.exit(1)
+
+        target_job_id = getattr(args, "job_id", None)
+        if target_job_id:
+            job_rec = db.get_job_by_id(target_job_id)
+            if not job_rec:
+                print(f"\n[ERROR] Job ID '{target_job_id}' not found in database. Single-job mode requires an existing stored job.")
+                sys.exit(1)
+            print(f"\n[SINGLE-JOB MODE] Targeting stored job ID: {target_job_id}")
+
         if args.max_apply is not None:
             if args.max_apply <= 0:
                 print(f"[ERROR] --max-apply must be a positive integer (got {args.max_apply}).")
@@ -396,18 +429,19 @@ def main():
 
         # Collect active searches for run banner (only first LinkedIn search for live/rehearsal runs)
         active_searches = []
-        if args.platform in ("linkedin", "all"):
-            li_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_linkedin.yaml", encoding="utf-8"))
-            for s in [sc for sc in li_cfg.get("searches", []) if not sc.get("disabled", False)][:1]:
-                s_copy = dict(s)
-                s_copy["platform"] = "linkedin"
-                active_searches.append(s_copy)
-        if args.platform in ("naukri", "all"):
-            nk_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_naukri.yaml", encoding="utf-8"))
-            for s in [sc for sc in nk_cfg.get("searches", []) if not sc.get("disabled", False)][:1]:
-                s_copy = dict(s)
-                s_copy["platform"] = "naukri"
-                active_searches.append(s_copy)
+        if not target_job_id:
+            if args.platform in ("linkedin", "all"):
+                li_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_linkedin.yaml", encoding="utf-8"))
+                for s in [sc for sc in li_cfg.get("searches", []) if not sc.get("disabled", False)][:1]:
+                    s_copy = dict(s)
+                    s_copy["platform"] = "linkedin"
+                    active_searches.append(s_copy)
+            if args.platform in ("naukri", "all"):
+                nk_cfg = yaml.safe_load(open(PROJECT_ROOT / "config" / "search_naukri.yaml", encoding="utf-8"))
+                for s in [sc for sc in nk_cfg.get("searches", []) if not sc.get("disabled", False)][:1]:
+                    s_copy = dict(s)
+                    s_copy["platform"] = "naukri"
+                    active_searches.append(s_copy)
 
         print_run_banner(platform=args.platform, mode=mode, guards=guards, resume_name=resume_name, active_searches=active_searches, is_rehearsal=is_rehearsal)
 
@@ -425,7 +459,8 @@ def main():
                 matcher=matcher,
                 platform=args.platform,
                 is_rehearsal=True,
-                review_mode=args.review
+                review_mode=args.review,
+                target_job_id=target_job_id
             )
         else:
             if not args.review:
@@ -440,7 +475,8 @@ def main():
                 matcher=matcher,
                 platform=args.platform,
                 is_rehearsal=False,
-                review_mode=True
+                review_mode=True,
+                target_job_id=target_job_id
             )
     elif not args.command:
         parser.print_help()

@@ -98,3 +98,52 @@ answers:
     # Re-evaluation finds the newly added answer
     assert answerer.find_direct_answer("GraphQL experience?") == "3 years"
 
+
+def test_get_eligible_found_jobs_requeues_answered_needs_input(temp_db, tmp_path):
+    from src.answerer import FormAnswerer
+
+    # 1. Record a job in NEEDS_INPUT with pending question "LinkedIn Profile"
+    temp_db.record_job(
+        platform="linkedin",
+        job_id="test-requeue-1",
+        title="Full Stack Engineer",
+        company="Particle41",
+        status="NEEDS_INPUT",
+        pending_question="LinkedIn Profile"
+    )
+
+    # Initially, with an answerer that has NO answer for LinkedIn Profile:
+    ans_file = tmp_path / "answers.yaml"
+    ans_file.write_text("answers:\n  - patterns: ['ctc']\n    value: '1500000'\n", encoding="utf-8")
+    empty_answerer = FormAnswerer(answers_path=ans_file)
+
+    # Job is NOT in get_eligible_found_jobs (because status is still NEEDS_INPUT)
+    eligible = temp_db.get_eligible_found_jobs("linkedin", answerer=empty_answerer)
+    assert not any(j["job_id"] == "test-requeue-1" for j in eligible)
+
+    # 2. Now user adds approved answer to answers.yaml
+    ans_file.write_text("""
+answers:
+  - patterns:
+      - "linkedin profile"
+      - "linkedin profile url"
+    value: "https://www.linkedin.com/in/guru-prasad-769b99227324"
+    exact_match: true
+""", encoding="utf-8")
+    updated_answerer = FormAnswerer(answers_path=ans_file)
+
+    # 3. get_eligible_found_jobs automatically requeues the job to FOUND and returns it!
+    eligible_after = temp_db.get_eligible_found_jobs("linkedin", answerer=updated_answerer)
+    matched_jobs = [j for j in eligible_after if j["job_id"] == "test-requeue-1"]
+    assert len(matched_jobs) == 1
+    assert matched_jobs[0]["title"] == "Full Stack Engineer"
+
+    # Verify DB status is now FOUND, failure_count is 0, and pending_question is cleared
+    with temp_db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, failure_count, pending_question FROM jobs WHERE job_id = 'test-requeue-1'")
+        row = cursor.fetchone()
+        assert row[0] == "FOUND"
+        assert row[1] == 0
+        assert row[2] == ""
+

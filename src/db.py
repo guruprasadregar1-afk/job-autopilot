@@ -1,5 +1,6 @@
 import sqlite3
 import datetime
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
@@ -145,7 +146,7 @@ class Database:
             }
             if status in blocking_statuses:
                 return False
-            if status == "FAILED" and failure_count >= 2:
+            if status in ("FAILED", "MODAL_NOT_DETECTED", "MODAL_CONTENT_NOT_RENDERED", "STEP_FAILED", "APPLY_BUTTON_NOT_FOUND") and failure_count >= 2:
                 return False
             return True
 
@@ -167,6 +168,28 @@ class Database:
                 (platform, str(job_id))
             )
             return cursor.fetchone() is not None
+
+    def get_job(self, platform: str, job_id: str) -> Optional[Dict[str, Any]]:
+        """Returns job record as dictionary if exists, else None."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM jobs WHERE platform = ? AND job_id = ?",
+                (platform, str(job_id))
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_job_by_id(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Returns job record as dictionary across platforms if exists, else None."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM jobs WHERE job_id = ?",
+                (str(job_id),)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def get_failure_count(self, platform: str, job_id: str) -> int:
         """Returns recorded consecutive/total failure count for a job."""
@@ -226,7 +249,7 @@ class Database:
             row = cursor.fetchone()
             old_status = row[0] if row else None
 
-            initial_failure_count = 1 if status == "FAILED" else 0
+            initial_failure_count = 1 if status in ("FAILED", "MODAL_NOT_DETECTED", "MODAL_CONTENT_NOT_RENDERED", "STEP_FAILED", "APPLY_BUTTON_NOT_FOUND") else 0
 
             cursor.execute("""
                 INSERT INTO jobs (
@@ -245,7 +268,7 @@ class Database:
                     status = excluded.status,
                     failure_reason = excluded.failure_reason,
                     pending_question = excluded.pending_question,
-                    failure_count = CASE WHEN excluded.status = 'FAILED' THEN COALESCE(jobs.failure_count, 0) + 1 ELSE COALESCE(jobs.failure_count, 0) END,
+                    failure_count = CASE WHEN excluded.status IN ('FAILED', 'MODAL_NOT_DETECTED', 'MODAL_CONTENT_NOT_RENDERED', 'STEP_FAILED', 'APPLY_BUTTON_NOT_FOUND') THEN COALESCE(jobs.failure_count, 0) + 1 ELSE COALESCE(jobs.failure_count, 0) END,
                     updated_at = excluded.updated_at,
                     applied_at = COALESCE(excluded.applied_at, jobs.applied_at)
             """, (
@@ -282,7 +305,7 @@ class Database:
             row = cursor.fetchone()
             old_status = row[0] if row else None
 
-            if status == "FAILED":
+            if status in ("FAILED", "MODAL_NOT_DETECTED", "MODAL_CONTENT_NOT_RENDERED", "STEP_FAILED", "APPLY_BUTTON_NOT_FOUND"):
                 cursor.execute("""
                     UPDATE jobs SET
                         status = ?,
@@ -399,14 +422,93 @@ class Database:
                 return row[0], row[1]
             return None, None
 
-    def get_eligible_found_jobs(self, platform: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Returns jobs already in DB with status 'FOUND' that are eligible for application, ordered by updated_at DESC."""
+    def requeue_answered_needs_input_jobs(self, platform: str, answerer: Optional[Any] = None) -> List[str]:
+        """
+        Finds any jobs with status 'NEEDS_INPUT' whose pending_question now has an
+        approved answer in answers.yaml / FormAnswerer.
+        Automatically resets their status to 'FOUND' with failure_count = 0 and clears pending_question.
+        Returns list of requeued job IDs.
+        """
+        if answerer is None:
+            try:
+                from src.answerer import FormAnswerer
+                answerer = FormAnswerer()
+            except Exception:
+                answerer = None
+
+        if not answerer:
+            return []
+
+        requeued = []
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT job_id, pending_question FROM jobs
+                WHERE platform = ? AND status = 'NEEDS_INPUT' AND pending_question IS NOT NULL AND pending_question != ''
+            """, (platform,))
+            rows = cursor.fetchall()
+
+            now = datetime.datetime.now().isoformat()
+            for row in rows:
+                jid = str(row[0])
+                pending_q = str(row[1]).strip()
+                clean_q = re.sub(r"\s*\[type:\s*[^\]]+\]", "", pending_q).strip()
+
+                ans = answerer.find_direct_answer(clean_q, field_type="text")
+                if not ans or ans == "UNKNOWN":
+                    ans = answerer.find_direct_answer(clean_q, field_type="dropdown")
+                if not ans or ans == "UNKNOWN":
+                    ans = answerer.find_direct_answer(clean_q, field_type="textarea")
+                if not ans or ans == "UNKNOWN":
+                    ans = answerer.find_direct_answer(clean_q, field_type="number")
+                if not ans or ans == "UNKNOWN":
+                    ans = answerer.find_direct_answer(clean_q, field_type="radio")
+
+                if ans and ans != "UNKNOWN":
+                    # Pending question is now answered! Reset job to FOUND
+                    cursor.execute("""
+                        UPDATE jobs SET
+                            status = 'FOUND',
+                            failure_count = 0,
+                            failure_reason = '',
+                            pending_question = '',
+                            updated_at = ?
+                        WHERE platform = ? AND job_id = ?
+                    """, (now, platform, jid))
+                    requeued.append(jid)
+            conn.commit()
+
+        for jid in requeued:
+            self.record_event(
+                platform=platform,
+                job_id=jid,
+                event="REQUEUED_FROM_NEEDS_INPUT",
+                old_status="NEEDS_INPUT",
+                new_status="FOUND",
+                note="Pending question now has approved answer in answers.yaml"
+            )
+            print(f"[REQUEUE] Job {jid} pending question answered -> automatically reset to FOUND.")
+
+        return requeued
+
+    def get_eligible_found_jobs(self, platform: str, limit: int = 10, answerer: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """
+        Returns jobs already in DB with status 'FOUND' or retryable statuses that are eligible for application, ordered by updated_at DESC.
+        Automatically checks and requeues any 'NEEDS_INPUT' jobs whose pending_question now has an approved answer.
+        """
+        try:
+            self.requeue_answered_needs_input_jobs(platform=platform, answerer=answerer)
+        except Exception as e:
+            print(f"[REQUEUE WARNING] Error during auto-requeue check: {e}")
+
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT platform, job_id, title, company, location, url, match_score, match_reason
                 FROM jobs
-                WHERE platform = ? AND status = 'FOUND'
+                WHERE platform = ?
+                  AND status IN ('FOUND', 'MODAL_NOT_DETECTED', 'MODAL_CONTENT_NOT_RENDERED', 'STEP_FAILED', 'BROWSER_CLOSED', 'APPLY_BUTTON_NOT_FOUND')
+                  AND COALESCE(failure_count, 0) < 2
                 ORDER BY updated_at DESC
                 LIMIT ?
             """, (platform, limit))

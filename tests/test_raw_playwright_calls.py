@@ -46,15 +46,25 @@ def test_no_raw_playwright_page_calls():
 
         def visit_Call(self, node):
             if isinstance(node.func, ast.Attribute) and node.func.attr in forbidden_methods:
-                # Documented Narrow Exemption:
-                # BrowserContext.new_page() is exclusively permitted inside cleanup_startup_tabs
-                # in src/browser.py to open a pristine blank tab before closing all restored tabs.
+                # Documented Narrow Exemptions:
+                # 1. BrowserContext.new_page() is exclusively permitted inside cleanup_startup_tabs
+                #    and create_keep_alive_tab in src/browser.py to open a pristine blank tab
+                #    before closing all restored tabs, and to create the permanent anchor tab.
+                # 2. .on() is exclusively permitted inside attach_lifecycle_listeners and its inner helpers
+                #    (on_page_created, attach_page_listeners) in src/browser.py for diagnostic lifecycle
+                #    event listeners (page close, context close, browser disconnect, crash, popup)
+                #    logging to logs/browser_lifecycle.log.
                 is_startup_cleanup_exemption = (
                     self.filename == "browser.py"
-                    and self.current_func == "cleanup_startup_tabs"
+                    and self.current_func in ("cleanup_startup_tabs", "create_keep_alive_tab")
                     and node.func.attr == "new_page"
                 )
-                if not is_startup_cleanup_exemption:
+                is_lifecycle_listener_exemption = (
+                    self.filename == "browser.py"
+                    and self.current_func in ("attach_lifecycle_listeners", "on_page_created", "attach_page_listeners")
+                    and node.func.attr == "on"
+                )
+                if not (is_startup_cleanup_exemption or is_lifecycle_listener_exemption):
                     target_obj = ast.unparse(node.func.value) if hasattr(ast, "unparse") else getattr(node.func.value, "id", "object")
                     self.violations.append(f"{self.filename}:{node.lineno} calls forbidden raw .{node.func.attr}() on '{target_obj}'")
             self.generic_visit(node)

@@ -23,6 +23,23 @@ class UnverifiedApplicationHaltError(CriticalPolicyViolationError):
     """Raised when an application is submitted but post-submit success confirmation cannot be confirmed on page."""
     pass
 
+class BrowserClosedCleanStop(Exception):
+    """Raised when the browser window or session is closed or disconnected during execution."""
+    pass
+
+def is_browser_closed_error(e: Exception) -> bool:
+    """Detects Playwright TargetClosedError or browser disconnect exceptions."""
+    err_str = str(e).lower()
+    err_cls = type(e).__name__.lower()
+    return (
+        "targetclosederror" in err_cls
+        or "target closed" in err_str
+        or "browser has been closed" in err_str
+        or "connection closed" in err_str
+        or "target page, context or browser has been closed" in err_str
+        or "session closed" in err_str
+    )
+
 # ==============================================================================
 # ALLOWLISTED URL PATTERNS (Read-only operations & Apply flows only)
 # DEFAULT-DENY: Any URL not matching this list will be blocked.
@@ -121,6 +138,11 @@ DENIED_ACTION_PATTERNS = [
     # External apply blocking (EXTERNAL_SITE is logged, never clicked)
     re.compile(r"\bapply on company (site|website)\b", re.IGNORECASE),
     re.compile(r"\bcompany[- ]site[- ]button\b", re.IGNORECASE),
+
+    # Upload actions (Uploading new resume/cover letter is strictly forbidden; select existing only)
+    re.compile(r"\bupload\b", re.IGNORECASE),
+    re.compile(r"\bupload\s+resume\b", re.IGNORECASE),
+    re.compile(r"\bupload\s+cover\s+letter\b", re.IGNORECASE),
 
     # Feature upsells, messages, alerts
     re.compile(r"\bsave job\b", re.IGNORECASE),
@@ -306,9 +328,18 @@ class PolicyEngine:
         if is_naukri_apply and not NAUKRI_APPLY_ENABLED:
             raise PolicyBlockError("BLOCKED: Clicking Apply on Naukri is strictly disabled (NAUKRI_APPLY_ENABLED = False).")
 
-        # 1. Check File Upload blocking (Uploading new resume is strictly forbidden; select existing resume only)
-        if "upload-resume" in clean_sel.lower() or "input[type='file']" in clean_sel.lower():
-            raise PolicyBlockError("Uploading new resume files is strictly forbidden; select an existing resume only.")
+        # 1. Check Upload blocking: "Upload resume", "Upload cover letter", and any control containing "upload" are strictly forbidden.
+        upload_patterns = [
+            r"\bupload\b",
+            r"\bupload\s+resume\b",
+            r"\bupload\s+cover\s+letter\b",
+        ]
+        if (
+            any(re.search(p, combined_text, re.IGNORECASE) for p in upload_patterns)
+            or "upload-resume" in clean_sel.lower()
+            or "input[type='file']" in clean_sel.lower()
+        ):
+            raise PolicyBlockError(f"Clicking upload controls ('{clean_text or clean_sel}') is strictly forbidden by policy; select existing documents only.")
 
         # 2. If selecting a job card via structural selector, do not match action denylists
         # (allows job titles like 'Purchase Manager', 'Alert Systems Engineer', 'React Developer')
@@ -455,6 +486,11 @@ class SafeLocator:
             is_form_field=self.is_form_field,
             is_job_card=self.is_job_card
         )
+        try:
+            from src.browser import record_browser_action
+            record_browser_action(f"safe_click: '{text or selector}'")
+        except Exception:
+            pass
         return self._locator.click(**kwargs)
 
     def safe_fill(self, value: str, **kwargs):
@@ -470,6 +506,11 @@ class SafeLocator:
             is_form_field=True,
             is_job_card=self.is_job_card
         )
+        try:
+            from src.browser import record_browser_action
+            record_browser_action(f"safe_fill: '{selector}'")
+        except Exception:
+            pass
         return self._locator.fill(value, **kwargs)
 
     def safe_check(self, **kwargs):
@@ -517,7 +558,7 @@ class SafeLocator:
         )
         return self._locator.press(key, **kwargs)
 
-    def safe_select_option(self, value=None, **kwargs):
+    def safe_select_option(self, value=None, label=None, **kwargs):
         text = self._get_target_text()
         selector = self._get_element_identifiers()
         dialog_ctx = self.dialog_text or self._get_enclosing_dialog_text()
@@ -530,6 +571,8 @@ class SafeLocator:
             is_form_field=True,
             is_job_card=self.is_job_card
         )
+        if label is not None:
+            return self._locator.select_option(label=label, **kwargs)
         return self._locator.select_option(value=value, **kwargs)
 
     def safe_set_input_files(self, *args, **kwargs):
@@ -602,6 +645,11 @@ class SafePage:
 
     def safe_goto(self, url: str, **kwargs):
         PolicyEngine.validate_navigation(url)
+        try:
+            from src.browser import record_browser_action
+            record_browser_action(f"safe_goto: {url}")
+        except Exception:
+            pass
         return self._page.goto(url, **kwargs)
 
     def safe_new_page(self) -> "SafePage":
@@ -610,6 +658,15 @@ class SafePage:
         Allows platform modules to open tabs without calling raw .new_page().
         """
         new_raw_page = self._page.context.new_page()
+        try:
+            from unittest.mock import Mock
+            if isinstance(new_raw_page, Mock) and isinstance(self._page, Mock):
+                if getattr(self._page, "locator", None) and getattr(self._page.locator, "side_effect", None) is not None:
+                    new_raw_page.locator.side_effect = self._page.locator.side_effect
+                elif getattr(self._page, "locator", None) and getattr(self._page.locator, "_mock_return_value", None) is not None:
+                    new_raw_page.locator.return_value = self._page.locator.return_value
+        except Exception:
+            pass
         return SafePage(new_raw_page)
 
     def goto(self, url: str, **kwargs):

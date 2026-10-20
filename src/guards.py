@@ -3,7 +3,7 @@ import random
 import datetime
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Set
 import yaml
 
 class SafetyStopError(Exception):
@@ -45,17 +45,29 @@ class GuardsManager:
 
         # Session attempts cap tracking
         self.session_attempts_count = 0
+        self.attempted_job_ids_in_run: Set[str] = set()
         self.attempts_summary: Dict[str, int] = {
             "opened": 0,
             "applied": 0,
             "needs_input": 0,
             "failed": 0,
-            "skipped": 0
+            "skipped": 0,
+            "reviewed": 0
         }
         self.needs_input_items: List[Dict[str, str]] = []
         self.failure_items: List[Dict[str, str]] = []
         self.review_reached_items: List[Dict[str, str]] = []
+        self.consecutive_modal_not_detected: int = 0
+        self.modal_not_detected_snapshots: List[str] = []
         self.set_max_attempts(max_attempts if max_attempts is not None else 10)
+
+    def is_job_attempted_in_run(self, job_id: str) -> bool:
+        """Returns True if job_id was already attempted in the current execution run."""
+        return str(job_id) in self.attempted_job_ids_in_run
+
+    def mark_job_attempted_in_run(self, job_id: str) -> None:
+        """Marks job_id as attempted in the current execution run."""
+        self.attempted_job_ids_in_run.add(str(job_id))
 
     def set_max_attempts(self, max_attempts: Optional[int]) -> None:
         """
@@ -70,6 +82,7 @@ class GuardsManager:
         """Called whenever an Easy Apply form is opened."""
         self.session_attempts_count += 1
         self.attempts_summary["opened"] += 1
+        self.consecutive_modal_not_detected = 0
         if hasattr(self.db, "record_job_attempt"):
             self.db.record_job_attempt(platform, job_id)
 
@@ -85,19 +98,40 @@ class GuardsManager:
         """Records reaching Review step and follow-company checkbox state."""
         self.review_reached_items.append({"job_id": str(job_id), "follow_company_state": str(follow_company_state)})
 
-    def record_attempt_outcome(self, outcome: str) -> None:
+    def record_attempt_outcome(self, outcome: str, job_id: str = "", snapshot_path: Optional[str] = None) -> None:
         """
         Categorizes attempt outcome into applied, needs_input, failed, or skipped.
+        Halts the run if 3 consecutive MODAL_NOT_DETECTED outcomes are encountered.
         """
         norm = str(outcome).upper()
         if norm in ("APPLIED", "UNVERIFIED"):
             self.attempts_summary["applied"] += 1
+            self.consecutive_modal_not_detected = 0
         elif norm == "NEEDS_INPUT":
             self.attempts_summary["needs_input"] += 1
-        elif norm in ("FAILED", "STUCK_STEP", "STEP_CAP_EXCEEDED", "RESUME_NOT_FOUND", "RESUME_MISMATCH"):
+            self.consecutive_modal_not_detected = 0
+        elif norm in ("FAILED", "STUCK_STEP", "STEP_CAP_EXCEEDED", "RESUME_NOT_FOUND", "RESUME_MISMATCH", "STEP_FAILED", "MODAL_NOT_DETECTED"):
             self.attempts_summary["failed"] += 1
+            if norm == "MODAL_NOT_DETECTED":
+                self.consecutive_modal_not_detected += 1
+                snap = snapshot_path or f"docs/snapshots/rehearsal_{job_id}_modal_not_detected.html"
+                self.modal_not_detected_snapshots.append(snap)
+                if self.consecutive_modal_not_detected >= 3:
+                    snaps = "\n".join(f"  - {s}" for s in self.modal_not_detected_snapshots[-3:])
+                    err_msg = (
+                        f"SAFETY HALT: 3 consecutive MODAL_NOT_DETECTED outcomes encountered. Halting run.\n"
+                        f"Saved snapshot paths:\n{snaps}"
+                    )
+                    print(f"\n[SAFETY HALT] {err_msg}\n")
+                    raise SafetyStopError(err_msg)
+            else:
+                self.consecutive_modal_not_detected = 0
+        elif norm in ("OBSERVED_REVIEW", "REVIEW_REACHED"):
+            self.attempts_summary["reviewed"] = self.attempts_summary.get("reviewed", 0) + 1
+            self.consecutive_modal_not_detected = 0
         else:
             self.attempts_summary["skipped"] += 1
+            self.consecutive_modal_not_detected = 0
 
     def check_attempts_guard(self) -> None:
         """Raises AttemptsLimitReachedError if session attempts cap is reached."""
@@ -110,6 +144,8 @@ class GuardsManager:
         print("\n" + "="*60)
         print(f"SESSION ATTEMPTS SUMMARY (Cap: {self.max_attempts})")
         print(f"  - Opened      : {self.attempts_summary['opened']}")
+        if self.attempts_summary.get("reviewed", 0) > 0 or self.settings.get("observe_only", True):
+            print(f"  - Reviewed    : {self.attempts_summary.get('reviewed', 0)}")
         print(f"  - Applied     : {self.attempts_summary['applied']}")
         print(f"  - Needs Input : {self.attempts_summary['needs_input']}")
         print(f"  - Failed      : {self.attempts_summary['failed']}")

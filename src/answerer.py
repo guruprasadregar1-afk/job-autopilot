@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import yaml
@@ -55,6 +56,57 @@ def format_numeric_digits_only(value: Any) -> str:
 
     return "UNKNOWN"
 
+def get_kolkata_now() -> datetime:
+    """Returns current datetime in Asia/Kolkata timezone (UTC+05:30)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        kolkata_tz = timezone(timedelta(hours=5, minutes=30), name="Asia/Kolkata")
+        return datetime.now(kolkata_tz)
+
+def compute_last_working_date(base_date: Optional[datetime] = None, format_hint: str = "") -> str:
+    """
+    Computes last working date as base_date (or TODAY in Asia/Kolkata) + 75 days.
+    Inspects format_hint (from helper text, aria-describedby, or placeholder) to determine format.
+    Defaults to 'DD Mon YYYY' (e.g. '02 Jan 2027').
+    """
+    if base_date is None:
+        base_date = get_kolkata_now()
+
+    target_date = base_date + timedelta(days=75)
+    hint_lower = (format_hint or "").lower().strip()
+
+    if "dd/mm/yyyy" in hint_lower or "d/m/y" in hint_lower or "dd/mm/yy" in hint_lower:
+        return target_date.strftime("%d/%m/%Y")
+    elif "yyyy-mm-dd" in hint_lower or "y-m-d" in hint_lower:
+        return target_date.strftime("%Y-%m-%d")
+    elif "mm/dd/yyyy" in hint_lower or "m/d/y" in hint_lower:
+        return target_date.strftime("%m/%d/%Y")
+    elif "dd-mm-yyyy" in hint_lower or "d-m-y" in hint_lower:
+        return target_date.strftime("%d-%m-%Y")
+    elif "mon dd, yyyy" in hint_lower or "month dd, yyyy" in hint_lower:
+        return target_date.strftime("%b %d, %Y")
+    elif "dd month yyyy" in hint_lower:
+        return target_date.strftime("%d %B %Y")
+    else:
+        # Default format when no format is stated
+        return target_date.strftime("%d %b %Y")
+
+
+def normalize_exact_option(text: str) -> str:
+    """
+    Normalizes option text for exact matching:
+    - Case-insensitive
+    - Strips surrounding whitespace
+    - Strips trailing period and surrounding whitespace
+    """
+    if not text:
+        return ""
+    s = str(text).strip()
+    s = s.rstrip(".").strip()
+    return s.lower()
+
 
 class FormAnswerer:
     def __init__(
@@ -85,7 +137,8 @@ class FormAnswerer:
         self.approved_answers = self._load_yaml(self.answers_path).get("answers", [])
 
     def normalize(self, text: str) -> str:
-        return re.sub(r"[^\w\s]", "", text.lower()).strip()
+        cleaned = re.sub(r"[^\w\s]", "", text.lower())
+        return re.sub(r"\s+", " ", cleaned).strip()
 
     def is_inr_or_notice_field(self, question: str) -> bool:
         """Identifies fields representing INR compensation or notice period in days."""
@@ -99,6 +152,17 @@ class FormAnswerer:
         """
         norm_q = self.normalize(question)
 
+        # Special rule for control labelled just "Bachelor's degree" / "Bachelors degree":
+        # Answered ONLY when its options are exactly Yes and No (case-insensitive); otherwise NEEDS_INPUT.
+        if norm_q in ("bachelors degree", "bachelor degree"):
+            if options and field_type in ("radio", "dropdown", "select", "checkbox"):
+                opt_set = {normalize_exact_option(o) for o in options if normalize_exact_option(o) not in ("select an option", "select", "please select", "choose an option", "")}
+                if opt_set == {"yes", "no"}:
+                    for opt in options:
+                        if normalize_exact_option(opt) == "yes":
+                            return opt
+            return None
+
         for entry in self.approved_answers:
             # Enforce experience rule:
             # "total/overall/professional experience" phrasing may return 4.5.
@@ -111,11 +175,56 @@ class FormAnswerer:
                     continue
 
             # Skill entries must NOT apply to questions about years or duration
-            is_skill_entry = entry.get("exact_match", False) or ("textarea_value" in entry)
+            is_explicit_years_pattern = any(
+                re.search(r"\b(year|years|month|months|duration|how long|exp|experience)\b", p.lower())
+                for p in entry.get("patterns", [])
+            )
+            is_skill_entry = ("textarea_value" in entry or entry.get("exact_match", False)) and not is_explicit_years_pattern and "numeric_value" not in entry
             if is_skill_entry:
                 is_years_or_duration = bool(re.search(r"\b(year|years|month|months|duration|how long|exp|experience)\b", norm_q))
                 if is_years_or_duration or field_type == "number":
                     continue
+
+            # URL entries (LinkedIn, Website, Portfolio): fill only text/URL inputs, never radio/dropdown/checkbox
+            is_url_entry = str(entry.get("value", "")).startswith("http://") or str(entry.get("value", "")).startswith("https://")
+            if is_url_entry:
+                if field_type not in ("text", "url", "textarea") or options:
+                    continue
+
+            # Last working date: text inputs only, computed at fill time
+            is_lwd_entry = any(
+                p in ("what is your last working date", "last working date") for p in entry.get("patterns", [])
+            )
+            if is_lwd_entry:
+                if field_type not in ("text", "url", "textarea") or options:
+                    continue
+
+            # Relocation rule: only applies to questions that do NOT name a country outside India
+            is_relocation_entry = any("relocat" in p for p in entry.get("patterns", []))
+            if is_relocation_entry:
+                foreign_country_named = bool(re.search(
+                    r"\b(us|usa|u\.s\.|united states|uk|u\.k\.|united kingdom|germany|canada|uae|dubai|australia|europe|singapore)\b",
+                    norm_q
+                ))
+                if foreign_country_named:
+                    continue
+
+            # Field type constraint: e.g. select/dropdown only
+            allowed_field_types = entry.get("allowed_field_types") or entry.get("field_types")
+            if allowed_field_types and field_type not in allowed_field_types:
+                continue
+
+            # Require exact options if specified in entry (e.g. Yes and No)
+            require_options = entry.get("require_options")
+            if require_options:
+                if not options:
+                    if field_type != "checkbox":
+                        continue
+                else:
+                    req_set = {normalize_exact_option(ro) for ro in require_options}
+                    opt_set = {normalize_exact_option(o) for o in options if normalize_exact_option(o) not in ("select an option", "select", "please select", "choose an option", "")}
+                    if opt_set != req_set:
+                        continue
 
             patterns = entry.get("patterns", [])
             exact_match = entry.get("exact_match", False)
@@ -144,10 +253,30 @@ class FormAnswerer:
                     elif field_type in ("radio", "dropdown", "checkbox") or options:
                         val = str(entry.get("value", ""))
                     else:
-                        val = str(entry.get("textarea_value", entry.get("value", "")))
+                        val = str(entry.get("text_value", entry.get("textarea_value", entry.get("value", ""))))
+
+                    if val == "DYNAMIC_LAST_WORKING_DATE":
+                        val = compute_last_working_date()
 
                     # If options are present, candidate MUST match one of the options
                     if options:
+                        accepted = entry.get("accepted_options")
+                        if accepted:
+                            for accepted_opt in accepted:
+                                norm_acc = normalize_exact_option(accepted_opt)
+                                for opt in options:
+                                    if normalize_exact_option(opt) == norm_acc:
+                                        return opt
+                            return None
+
+                        if exact_match or entry.get("exact_option_match", False):
+                            # Only exact normalized option match allowed (no nearest, rounding or partial)
+                            norm_val = self.normalize(val)
+                            norm_exact_val = normalize_exact_option(val)
+                            for opt in options:
+                                if self.normalize(opt) == norm_val or normalize_exact_option(opt) == norm_exact_val:
+                                    return opt
+                            return None
                         return self._match_option(val, options)
                     return val
 
@@ -217,6 +346,25 @@ class FormAnswerer:
             or bool(re.search(r"\b(java|aws|react|node|full\s*stack|fullstack|python|angular|vue|devops|cloud|backend|frontend|golang|git|docker|kubernetes|sql)\b", norm_q))
         )
         if is_specific_skill:
+            return "UNKNOWN"
+
+        # Education guards: Master's degree, highest level of education, field of study, university, grade, graduation year strictly UNKNOWN -> NEEDS_INPUT
+        if any(k in norm_q for k in [
+            "master", "highest level of education", "highest education",
+            "field of study", "university", "college", "school",
+            "gpa", "grade", "percentage", "graduation year", "year of graduation"
+        ]):
+            return "UNKNOWN"
+
+        # Relevant work experience: only allowed as dropdown/select with "3-4 years". If text or number, strictly UNKNOWN -> NEEDS_INPUT.
+        if "relevant work experience" in norm_q and field_type in ("text", "number"):
+            return "UNKNOWN"
+
+        # English proficiency & degree options: if direct answer did not match options, strictly UNKNOWN -> NEEDS_INPUT
+        if any(k in norm_q for k in ["english proficiency", "english language proficiency", "level of english", "english level", "proficiency in english"]):
+            return "UNKNOWN"
+
+        if any(k in norm_q for k in ["which bachelor", "bachelor degree", "bachelors degree", "degree name"]):
             return "UNKNOWN"
 
         # Step 2: Query Claude if no direct match

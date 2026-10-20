@@ -133,15 +133,9 @@ education:
 
 preferences:
   target_locations_india:
-    - "Bengaluru"
-    - "Pune"
-    - "Hyderabad"
-    - "Gurgaon"
-    - "Noida"
-    - "Jaipur"
-  target_locations_international:
-    - "EU"
-    - "UAE"
+    - "India"
+  apply_anywhere_in_india: true
+  target_locations_international: []
   work_modes:
     - "Remote"
     - "Hybrid"
