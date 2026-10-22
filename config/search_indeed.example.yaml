@@ -1,0 +1,18 @@
+# Indeed Search Configurations - Example Template
+platform: "indeed"
+
+searches:
+  - keywords: "Senior Full Stack Developer"
+    location: "India"
+    iafilter: true              # "Easily apply" jobs only
+    domain: "in.indeed.com"
+
+  - keywords: "Senior Full Stack Developer"
+    location: "Dubai"
+    iafilter: true              # "Easily apply" jobs only
+    domain: "ae.indeed.com"
+
+  - keywords: "Full Stack Engineer"
+    location: "India"
+    iafilter: true
+    domain: "in.indeed.com"

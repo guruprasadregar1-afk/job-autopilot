@@ -191,7 +191,7 @@ def print_run_banner(platform: str, mode: str, guards: GuardsManager, resume_nam
     max_attempts_val = guards.max_attempts
     max_jobs_plat = guards.settings.get("search", {}).get("max_jobs_per_platform", 10)
 
-    effective_observe_only = True if is_rehearsal else OBSERVE_ONLY
+    effective_observe_only = True if (is_rehearsal or "rehearsal" in mode.lower() or "dry-run" in mode.lower()) else OBSERVE_ONLY
 
     print("\n" + "="*70)
     print("                      JOB AUTOPILOT RUN BANNER")
@@ -308,6 +308,40 @@ def run_pipeline(
             for q in nk_cfg.get("searches", [])[:1]:
                 nk_collector.run_phase8a_search(page, q, max_jobs=max_jobs, dry_run=True)
 
+        if platform in ("indeed", "all"):
+            from src.platforms.indeed import IndeedCollector, IndeedApplicant
+            in_applicant = IndeedApplicant(
+                db=db,
+                guards=guards,
+                review_mode=review_mode,
+                is_rehearsal=effective_rehearsal
+            )
+            in_collector = IndeedCollector(db, guards, matcher, browser_manager=mgr)
+            remaining_attempts = guards.max_attempts - guards.session_attempts_count
+            if remaining_attempts > 0:
+                in_collector.process_eligible_found_jobs(
+                    page,
+                    applicant=in_applicant,
+                    limit=remaining_attempts,
+                    is_rehearsal=effective_rehearsal,
+                    target_job_id=target_job_id
+                )
+            if not target_job_id:
+                remaining_attempts = guards.max_attempts - guards.session_attempts_count
+                if remaining_attempts > 0:
+                    indeed_cfg_file = PROJECT_ROOT / "config" / "search_indeed.yaml"
+                    if indeed_cfg_file.exists():
+                        in_cfg = yaml.safe_load(open(indeed_cfg_file, encoding="utf-8")) or {}
+                        for q in in_cfg.get("searches", [])[:1]:
+                            in_collector.run_search_and_apply(
+                                page,
+                                search_query=q,
+                                applicant=in_applicant,
+                                max_jobs=max_jobs,
+                                is_rehearsal=effective_rehearsal,
+                                dry_run=False
+                            )
+
     except BrowserClosedCleanStop as e:
         print("\n[STOP] Browser closed unexpectedly (see logs/browser_lifecycle.log). Saving state and exiting cleanly.")
     except UsageLimitReached as e:
@@ -388,7 +422,7 @@ def main():
     subparsers.add_parser("needs-input", help="List unanswered questions requiring manual input")
 
     run_parser = subparsers.add_parser("run", help="Run application automation")
-    run_parser.add_argument("--platform", choices=["linkedin", "naukri", "all"], default="linkedin", help="Target platform to run (choices: linkedin, naukri, all; default: linkedin)")
+    run_parser.add_argument("--platform", choices=["linkedin", "naukri", "indeed", "all"], default="linkedin", help="Target platform to run (choices: linkedin, naukri, indeed, all; default: linkedin)")
     run_parser.add_argument("--dry-run", action="store_true", help="Simulate flow without final submit")
     run_parser.add_argument("--rehearse", action="store_true", help="Force rehearsal mode (observe-only, submit impossible)")
     run_parser.add_argument("--review", action="store_true", help="Pause and ask for confirmation before submit")
@@ -483,6 +517,14 @@ def main():
                     s_copy = dict(s)
                     s_copy["platform"] = "naukri"
                     active_searches.append(s_copy)
+            if args.platform in ("indeed", "all"):
+                ind_path = PROJECT_ROOT / "config" / "search_indeed.yaml"
+                if ind_path.exists():
+                    ind_cfg = yaml.safe_load(open(ind_path, encoding="utf-8")) or {}
+                    for s in [sc for sc in ind_cfg.get("searches", []) if not sc.get("disabled", False)][:1]:
+                        s_copy = dict(s)
+                        s_copy["platform"] = "indeed"
+                        active_searches.append(s_copy)
 
         print_run_banner(platform=args.platform, mode=mode, guards=guards, resume_name=resume_name, active_searches=active_searches, is_rehearsal=is_rehearsal)
 

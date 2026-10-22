@@ -631,6 +631,7 @@ class Database:
                     "date": d_str,
                     "linkedin": counts.get("linkedin", 0),
                     "naukri": counts.get("naukri", 0),
+                    "indeed": counts.get("indeed", 0),
                     "total": sum(counts.values())
                 })
         return daily

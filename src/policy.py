@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 # Flipping this to False requires explicit written user approval.
 OBSERVE_ONLY: bool = False
 NAUKRI_APPLY_ENABLED: bool = False
+INDEED_APPLY_ENABLED: bool = True
 
 class PolicyBlockError(Exception):
     """Raised when an action is blocked by safety policy."""
@@ -84,6 +85,13 @@ ALLOWED_URL_PATTERNS = [
     re.compile(r"^https://www\.naukri\.com/job-listings-[a-zA-Z0-9_-]+.*", re.IGNORECASE),
     re.compile(r"^https://www\.naukri\.com/mnjuser/homepage/?(\?.*)?$", re.IGNORECASE),
     re.compile(r"^https://www\.naukri\.com/nlogin/login/?(\?.*)?$", re.IGNORECASE),
+
+    # Indeed (Jobs search, job views, mobile views, smartapply modals, and auth)
+    re.compile(r"^https://([a-z0-9-]+\.)?indeed\.com/?$", re.IGNORECASE),
+    re.compile(r"^https://([a-z0-9-]+\.)?indeed\.com/jobs(\?.*)?$", re.IGNORECASE),
+    re.compile(r"^https://([a-z0-9-]+\.)?indeed\.com/(m/)?viewjob(\?.*)?$", re.IGNORECASE),
+    re.compile(r"^https://([a-z0-9-]+\.)?indeed\.com/account/.*", re.IGNORECASE),
+    re.compile(r"^https://smartapply\.indeed\.com/.*", re.IGNORECASE),
 ]
 
 # ==============================================================================
@@ -814,6 +822,15 @@ def verify_and_record_post_submit(page, platform: str, db, job_id: str) -> str:
             "div.apply-message:has-text('Application sent'), "
             "div[class*='apply']:has-text('Successfully Applied'), "
             "span:has-text('applied successfully')"
+        )
+        confirmed = (success_loc.count() > 0)
+    elif platform == "indeed":
+        success_loc = page.locator(
+            "h1:has-text('Your application has been submitted'), "
+            "h2:has-text('Application submitted'), "
+            "div:has-text('Your application was submitted'), "
+            "div:has-text('Application sent to'), "
+            "p:has-text('Your application has been submitted')"
         )
         confirmed = (success_loc.count() > 0)
 

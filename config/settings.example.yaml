@@ -4,6 +4,7 @@
 caps:
   linkedin_daily_cap: 25        # user specified
   naukri_daily_cap: 40          # user specified
+  indeed_daily_cap: 15          # default Indeed daily limit
   attempts_per_day: 25          # user specified (default 25 per platform across all runs)
 
 search:

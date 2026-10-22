@@ -75,6 +75,7 @@ def load_data_readonly(db_path: Path) -> Dict[str, Any]:
                 "date": d_str,
                 "linkedin": counts.get("linkedin", 0),
                 "naukri": counts.get("naukri", 0),
+                "indeed": counts.get("indeed", 0),
                 "total": sum(counts.values())
             })
 
@@ -323,6 +324,7 @@ def render_dashboard_html(data: Dict[str, Any]) -> str:
           <option value="">All Platforms</option>
           <option value="linkedin">LinkedIn</option>
           <option value="naukri">Naukri</option>
+          <option value="indeed">Indeed</option>
         </select>
         <select id="statusFilter" class="select-filter" onchange="filterJobs()">
           <option value="">All Statuses</option>

@@ -268,6 +268,8 @@ class GuardsManager:
             configured_cap = caps_cfg.get("linkedin_daily_cap", 25)
         elif platform == "naukri":
             configured_cap = caps_cfg.get("naukri_daily_cap", 40)
+        elif platform == "indeed":
+            configured_cap = caps_cfg.get("indeed_daily_cap", 15)
         else:
             configured_cap = 25
 
