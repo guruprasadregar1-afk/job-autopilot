@@ -25,8 +25,8 @@ def test_format_numeric_digits_only():
     assert format_numeric_digits_only("60") == "60"
 
     # Ambiguous inputs: MUST return UNKNOWN, never round or strip
-    assert format_numeric_digits_only("4.5") == "UNKNOWN"
-    assert format_numeric_digits_only("4.5 years") == "UNKNOWN"
+    assert format_numeric_digits_only("5.5") == "UNKNOWN"
+    assert format_numeric_digits_only("5.5 years") == "UNKNOWN"
     assert format_numeric_digits_only("3.2") == "UNKNOWN"
     assert format_numeric_digits_only("3.2 years") == "UNKNOWN"
     assert format_numeric_digits_only("five years") == "UNKNOWN"
@@ -66,8 +66,8 @@ answers:
   - patterns:
       - "total years of experience"
       - "overall experience"
-    value: "4.5"
-    numeric_value: 4.5
+    value: "5"
+    numeric_value: 5
 """, encoding="utf-8")
     fake_profile = tmp_path / "profile.yaml"
     fake_profile.write_text("personal:\n  current_city: 'Bengaluru'\n", encoding="utf-8")
@@ -95,9 +95,9 @@ answers:
     ans_pin = answerer.answer_question("Please provide your postal code / zip code", field_type="text")
     assert ans_pin == "560001"
 
-    # Total experience (overall experience -> 4.5)
+    # Total experience (overall experience -> 5)
     ans_exp = answerer.answer_question("What is your total years of experience?", field_type="text")
-    assert ans_exp == "4.5"
+    assert ans_exp == "5"
 
     # Per-skill experience (React) returns UNKNOWN -> NEEDS_INPUT
     ans_react = answerer.answer_question("How many years of experience in React do you have?", field_type="text")
@@ -119,10 +119,10 @@ def test_unknown_question_handling():
 def test_experience_phrasing_rules():
     answerer = FormAnswerer()
 
-    # 1. Total/overall/professional experience general phrasing returns 4.5
+    # 1. Total/overall/professional experience general phrasing returns 5
     ans_total_prof = answerer.find_direct_answer("total years of professional experience", field_type="text")
-    assert ans_total_prof == "4.5"
-    assert answerer.answer_question("total years of professional experience", field_type="text") == "4.5"
+    assert ans_total_prof == "5"
+    assert answerer.answer_question("total years of professional experience", field_type="text") == "5"
 
     # 2. Specific skill: Java -> UNKNOWN / None
     assert answerer.find_direct_answer("years of experience with Java", field_type="number") is None
@@ -148,7 +148,7 @@ def test_user_approved_screening_answers():
     answerer = FormAnswerer()
 
     # 1. total work experience
-    assert answerer.find_direct_answer("total work experience", field_type="text") == "4.5"
+    assert answerer.find_direct_answer("total work experience", field_type="text") == "5"
 
     # 2. JavaScript proficiency
     js_text = "Yes, I have professional experience developing applications using JavaScript, including backend services and frontend functionality."
@@ -245,7 +245,7 @@ def test_skill_entries_exact_matching_and_negative_guards():
     assert answerer.find_direct_answer("Are you familiar with next steps in the hiring process?") is None
     assert answerer.find_direct_answer("next steps in the hiring process") is None
 
-    # 4. "years of experience with React" must NOT match React proficiency or return 4.5 -> UNKNOWN
+    # 4. "years of experience with React" must NOT match React proficiency or return 5 -> UNKNOWN
     assert answerer.find_direct_answer("years of experience with React") is None
     assert answerer.answer_question("years of experience with React") == "UNKNOWN"
 
@@ -290,7 +290,7 @@ def test_linkedin_real_strings_with_punctuation_and_normalization():
 
 def test_linkedin_url_answer_and_punctuation_variants():
     answerer = FormAnswerer()
-    expected_url = "https://www.linkedin.com/in/guru-prasad-769b99227324"
+    expected_url = "https://www.linkedin.com/in/guru-prasad-769b99227"
 
     variants = [
         "LinkedIn Profile",
@@ -360,26 +360,26 @@ def test_last_working_date_computation_and_rollovers():
 
     kolkata_tz = timezone(timedelta(hours=5, minutes=30))
 
-    # 1. Year rollover: 2026-10-19 + 75 days -> 2027-01-02
-    base_2026 = datetime(2026, 10, 19, 12, 0, 0, tzinfo=kolkata_tz)
+    # 1. Year rollover: 2026-11-15 + 60 days -> 2027-01-14
+    base_2026 = datetime(2026, 11, 15, 12, 0, 0, tzinfo=kolkata_tz)
     res_default = compute_last_working_date(base_date=base_2026)
-    assert res_default == "02 Jan 2027", f"Expected '02 Jan 2027', got '{res_default}'"
+    assert res_default == "14 Jan 2027", f"Expected '14 Jan 2027', got '{res_default}'"
 
     # Formats with year rollover date
-    assert compute_last_working_date(base_date=base_2026, format_hint="Please enter DD/MM/YYYY") == "02/01/2027"
-    assert compute_last_working_date(base_date=base_2026, format_hint="YYYY-MM-DD") == "2027-01-02"
-    assert compute_last_working_date(base_date=base_2026, format_hint="MM/DD/YYYY") == "01/02/2027"
-    assert compute_last_working_date(base_date=base_2026, format_hint="") == "02 Jan 2027"
+    assert compute_last_working_date(base_date=base_2026, format_hint="Please enter DD/MM/YYYY") == "14/01/2027"
+    assert compute_last_working_date(base_date=base_2026, format_hint="YYYY-MM-DD") == "2027-01-14"
+    assert compute_last_working_date(base_date=base_2026, format_hint="MM/DD/YYYY") == "01/14/2027"
+    assert compute_last_working_date(base_date=base_2026, format_hint="") == "14 Jan 2027"
 
-    # 2. Month rollover: 2026-03-01 + 75 days -> 2026-05-15
+    # 2. Month rollover: 2026-03-01 + 60 days -> 2026-04-30
     base_mar = datetime(2026, 3, 1, 10, 0, 0, tzinfo=kolkata_tz)
     res_mar = compute_last_working_date(base_date=base_mar)
-    assert res_mar == "15 May 2026", f"Expected '15 May 2026', got '{res_mar}'"
+    assert res_mar == "30 Apr 2026", f"Expected '30 Apr 2026', got '{res_mar}'"
 
-    # 3. Leap year rollover: 2028-01-10 + 75 days -> 2028-03-25 (Feb 2028 has 29 days)
+    # 3. Leap year rollover: 2028-01-10 + 60 days -> 2028-03-10 (Feb 2028 has 29 days)
     base_leap = datetime(2028, 1, 10, 10, 0, 0, tzinfo=kolkata_tz)
     res_leap = compute_last_working_date(base_date=base_leap)
-    assert res_leap == "25 Mar 2028", f"Expected '25 Mar 2028', got '{res_leap}'"
+    assert res_leap == "10 Mar 2028", f"Expected '10 Mar 2028', got '{res_leap}'"
 
 
 def test_last_working_date_question_variants_and_text_only():
@@ -407,7 +407,7 @@ def test_last_working_date_question_variants_and_text_only():
     assert answerer.find_direct_answer("What is your last working date?", field_type="checkbox") is None
 
 
-def test_notice_period_and_profile_consistency_75_days():
+def test_notice_period_and_profile_consistency_60_days():
     import yaml
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent
@@ -419,18 +419,18 @@ def test_notice_period_and_profile_consistency_75_days():
         if any("notice period" in p for p in e.get("patterns", []))
     ]
     assert len(notice_entries) == 1
-    assert notice_entries[0]["value"] == "75 days"
-    assert notice_entries[0]["numeric_value"] == 75
+    assert notice_entries[0]["value"] == "60 days"
+    assert notice_entries[0]["numeric_value"] == 60
 
     # Check profile.yaml
     profile_data = yaml.safe_load(open(root / "config" / "profile.yaml", encoding="utf-8"))
-    assert profile_data.get("compensation_and_notice", {}).get("notice_period_days") == 75
+    assert profile_data.get("compensation_and_notice", {}).get("notice_period_days") == 60
 
 
 def test_item_1_positive_answers_matching():
     """
     Verifies Item 2 positive test requirements:
-    1. Real labels with asterisks: 'How many years of relevant work experience do you have?*' -> dropdown selects '3-4 years'.
+    1. Real labels with asterisks: 'How many years of relevant work experience do you have?*' -> dropdown selects '5-6 years'.
     2. 'Do you have a Bachelor's degree?' -> 'Yes'.
     3. Dropdown with 'BCA' -> 'BCA'.
     4. Dropdown with 'Professional' -> 'Professional'.
@@ -447,8 +447,8 @@ def test_item_1_positive_answers_matching():
     ]
     for lbl in labels_exp:
         ans = answerer.find_direct_answer(lbl, field_type="dropdown", options=opts_exp)
-        assert ans == "3-4 years", f"Expected '3-4 years' for '{lbl}', got '{ans}'"
-        assert answerer.answer_question(lbl, field_type="dropdown", options=opts_exp) == "3-4 years"
+        assert ans == "5-6 years", f"Expected '5-6 years' for '{lbl}', got '{ans}'"
+        assert answerer.answer_question(lbl, field_type="dropdown", options=opts_exp) == "5-6 years"
 
     # 2. Bachelor's degree (Yes/No)
     opts_yes_no = ["Yes", "No"]
@@ -696,34 +696,75 @@ def test_bachelors_degree_name_negative_named():
 
 
 def test_full_time_start_availability_positive():
-    """Tests matching for full-time start availability with accepted options."""
+    """Tests matching for full-time start availability with exact option texts 'Within 2 months' and 'Within two months'."""
     answerer = FormAnswerer()
-    q = "When are you available to start working on a full-time basis?*"
+    patterns = [
+        "When are you available to start working on a full-time basis?",
+        "When can you start?",
+        "When can you join?",
+        "When are you available to start?",
+    ]
 
-    # 1. Dropdown with 'In 3 months or more'
-    opts_standard = ['Immediately', 'Within 1 week', 'Within 2 weeks', 'Within 1 month', 'Within 2 months', 'In 3 months or more']
-    assert answerer.find_direct_answer(q, field_type="dropdown", options=opts_standard) == "In 3 months or more"
-    assert answerer.answer_question(q, field_type="dropdown", options=opts_standard) == "In 3 months or more"
+    list1 = [
+        "Immediately",
+        "Within 1 week",
+        "Within 2 weeks",
+        "Within 1 month",
+        "Within 2 months",
+        "In 3 months or more"
+    ]
 
-    # 2. Dropdown with exact 'In 3 months'
-    opts_alt = ['Immediately', 'Within 1 month', 'In 3 months']
-    assert answerer.find_direct_answer(q, field_type="dropdown", options=opts_alt) == "In 3 months"
+    list2 = [
+        "Immediately",
+        "Within two weeks",
+        "Within one month",
+        "Within two months",
+        "Within three months",
+        "In more than three months"
+    ]
 
-    # 3. Text field
-    assert answerer.find_direct_answer(q, field_type="text") == "In 3 months or more"
+    for q in patterns:
+        # List 1 selects "Within 2 months" for dropdown and radio
+        assert answerer.find_direct_answer(q, field_type="dropdown", options=list1) == "Within 2 months"
+        assert answerer.answer_question(q, field_type="dropdown", options=list1) == "Within 2 months"
+        assert answerer.find_direct_answer(q, field_type="radio", options=list1) == "Within 2 months"
+        assert answerer.answer_question(q, field_type="radio", options=list1) == "Within 2 months"
+
+        # List 2 selects "Within two months" for dropdown and radio
+        assert answerer.find_direct_answer(q, field_type="dropdown", options=list2) == "Within two months"
+        assert answerer.answer_question(q, field_type="dropdown", options=list2) == "Within two months"
+        assert answerer.find_direct_answer(q, field_type="radio", options=list2) == "Within two months"
+        assert answerer.answer_question(q, field_type="radio", options=list2) == "Within two months"
+
+        # Text field returns configured value "Within 2 months"
+        assert answerer.find_direct_answer(q, field_type="text") == "Within 2 months"
 
 
 def test_full_time_start_availability_negative():
-    """Tests strict matching: when 3 months option is absent or question differs -> UNKNOWN."""
+    """Tests strict matching: when neither 'Within 2 months' nor 'Within two months' is offered -> None / UNKNOWN."""
     answerer = FormAnswerer()
-    q = "When are you available to start working on a full-time basis?*"
+    patterns = [
+        "When are you available to start working on a full-time basis?",
+        "When can you start?",
+        "When can you join?",
+        "When are you available to start?",
+    ]
 
-    # 1. Options lacking 3 months -> None / UNKNOWN (no rounding/nearest)
-    opts_no_match = ['Immediately', 'Within 1 week', 'Within 2 weeks', 'Within 1 month']
-    assert answerer.find_direct_answer(q, field_type="dropdown", options=opts_no_match) is None
-    assert answerer.answer_question(q, field_type="dropdown", options=opts_no_match) == "UNKNOWN"
+    opts_neither = [
+        "Immediately",
+        "Within 1 week",
+        "Within 2 weeks",
+        "Within 1 month",
+        "In 3 months or more"
+    ]
 
-    # 2. Unrelated availability question -> UNKNOWN
+    for q in patterns:
+        assert answerer.find_direct_answer(q, field_type="dropdown", options=opts_neither) is None
+        assert answerer.answer_question(q, field_type="dropdown", options=opts_neither) == "UNKNOWN"
+        assert answerer.find_direct_answer(q, field_type="radio", options=opts_neither) is None
+        assert answerer.answer_question(q, field_type="radio", options=opts_neither) == "UNKNOWN"
+
+    # Unrelated availability question -> UNKNOWN
     assert answerer.find_direct_answer("Are you available to work on weekends?", field_type="text") is None
     assert answerer.answer_question("Are you available to work on weekends?", field_type="text") == "UNKNOWN"
 
@@ -890,6 +931,318 @@ def test_city_location_negative():
     # 2. Unrelated city question -> UNKNOWN
     assert answerer.find_direct_answer("What is your favorite city to visit?", field_type="text") is None
     assert answerer.answer_question("What is your favorite city to visit?", field_type="text") == "UNKNOWN"
+
+
+def test_evidence_three_questions_removed_or_strict():
+    """
+    Item 9: Tests the three questions from Item 1:
+    - Back-End Web Development (removed): returns None / UNKNOWN
+    - IPython (removed): returns None / UNKNOWN
+    - Data Engineering (unapproved): returns None / UNKNOWN
+    """
+    answerer = FormAnswerer()
+
+    q_backend = "How many years of work experience do you have with Back-End Web Development?*"
+    assert answerer.find_direct_answer(q_backend, field_type="text") is None
+    assert answerer.find_direct_answer(q_backend, field_type="number") is None
+    assert answerer.answer_question(q_backend, field_type="text") == "UNKNOWN"
+
+    q_ipython = "How many years of work experience do you have with IPython?*"
+    assert answerer.find_direct_answer(q_ipython, field_type="text") is None
+    assert answerer.find_direct_answer(q_ipython, field_type="number") is None
+    assert answerer.answer_question(q_ipython, field_type="text") == "UNKNOWN"
+
+    q_data_eng = "How many years of work experience do you have with Data Engineering?*"
+    assert answerer.find_direct_answer(q_data_eng, field_type="text") is None
+    assert answerer.find_direct_answer(q_data_eng, field_type="number") is None
+    assert answerer.answer_question(q_data_eng, field_type="text") == "UNKNOWN"
+
+
+def test_skill_years_approved_and_unapproved_cases():
+    """
+    Item 9: Tests per-skill approved and unapproved cases:
+    - Default state: 'none approved', all return None / UNKNOWN -> NEEDS_INPUT.
+    - Configured approved skill: fills only text/number with digits, or exact dropdown option.
+    - Any other skill/domain -> None / UNKNOWN.
+    """
+    answerer = FormAnswerer()
+
+    # 1. Default state: none approved
+    for skill in ["React.js", "Node.js", "JavaScript", "TypeScript", "Next.js", "NestJS", "MongoDB", "PostgreSQL", "AWS"]:
+        q = f"How many years of work experience do you have with {skill}?"
+        assert answerer.find_direct_answer(q, field_type="text") is None
+        assert answerer.find_direct_answer(q, field_type="number") is None
+        assert answerer.answer_question(q, field_type="number") == "UNKNOWN"
+
+    # 2. Configured approved skill
+    answerer.approved_skill_years = {"React.js": "4", "Node.js": "4"}
+
+    # Text / number input returns digits only
+    assert answerer.find_direct_answer("How many years of work experience do you have with React.js?", field_type="text") == "4"
+    assert answerer.find_direct_answer("How many years of work experience do you have with React.js?", field_type="number") == "4"
+    assert answerer.find_direct_answer("How many years of work experience do you have with Node.js?", field_type="text") == "4"
+
+    # Dropdown selects exact matching option text
+    opts = ["1 year", "2 years", "4 years", "5+ years"]
+    assert answerer.find_direct_answer("How many years of work experience do you have with React.js?", field_type="dropdown", options=opts) == "4 years"
+
+    # Dropdown without matching option returns None
+    opts_nomatch = ["10+ years", "15+ years"]
+    assert answerer.find_direct_answer("How many years of work experience do you have with React.js?", field_type="dropdown", options=opts_nomatch) is None
+
+    # Unapproved skill remains None / UNKNOWN even when other skills are approved
+    for unapproved in ["IPython", "Data Engineering", "Back-End Web Development", "Docker", "Rust"]:
+        q_un = f"How many years of work experience do you have with {unapproved}?"
+        assert answerer.find_direct_answer(q_un, field_type="text") is None
+        assert answerer.find_direct_answer(q_un, field_type="number") is None
+        assert answerer.answer_question(q_un, field_type="number") == "UNKNOWN"
+
+
+def test_when_can_you_start_six_options():
+    """
+    Tests the six 'when can you start' options from the real snapshot:
+    1. Immediately
+    2. Within 1 week
+    3. Within 2 weeks
+    4. Within 1 month
+    5. Within 2 months
+    6. In 3 months or more
+    With Option A ("Within 2 months"), it selects 'Within 2 months'.
+    When 'Within 2 months' is absent, it returns None -> UNKNOWN (NEEDS_INPUT).
+    """
+    answerer = FormAnswerer()
+    q1 = "When are you available to start working on a full-time basis?*"
+    q2 = "When can you start?"
+    q3 = "When can you join?"
+
+    six_options = [
+        "Immediately",
+        "Within 1 week",
+        "Within 2 weeks",
+        "Within 1 month",
+        "Within 2 months",
+        "In 3 months or more"
+    ]
+
+    for q in (q1, q2, q3):
+        assert answerer.find_direct_answer(q, field_type="dropdown", options=six_options) == "Within 2 months"
+        assert answerer.answer_question(q, field_type="dropdown", options=six_options) == "Within 2 months"
+
+    # When 'Within 2 months' is absent
+    five_options = [
+        "Immediately",
+        "Within 1 week",
+        "Within 2 weeks",
+        "Within 1 month",
+        "In 3 months or more"
+    ]
+    for q in (q1, q2, q3):
+        assert answerer.find_direct_answer(q, field_type="dropdown", options=five_options) is None
+        assert answerer.answer_question(q, field_type="dropdown", options=five_options) == "UNKNOWN"
+
+
+def test_work_authorization_strict_options():
+    """
+    Item 9: Tests work authorization accepted_options: ['I can work here without any restrictions'].
+    Any other option text (fuzzy Yes, etc.) returns None / UNKNOWN -> NEEDS_INPUT.
+    """
+    answerer = FormAnswerer()
+    q = "What is your work authorization status for India?*"
+
+    # Positive: exact option present
+    opts_valid = [
+        "I can work here without any restrictions",
+        "I can work here, but only for a limited time",
+        "I can work here, but only for my current employer",
+        "I can't work here yet"
+    ]
+    assert answerer.find_direct_answer(q, field_type="radio", options=opts_valid) == "I can work here without any restrictions"
+    assert answerer.find_direct_answer(q, field_type="dropdown", options=opts_valid) == "I can work here without any restrictions"
+
+    # Negative: options without exact string (e.g. Yes/No, partial/fuzzy)
+    opts_fuzzy = ["Authorized to work without restrictions", "Without restrictions", "Yes", "No"]
+    assert answerer.find_direct_answer(q, field_type="dropdown", options=opts_fuzzy) is None
+    assert answerer.answer_question(q, field_type="dropdown", options=opts_fuzzy) == "UNKNOWN"
+    assert answerer.find_direct_answer(q, field_type="radio", options=opts_fuzzy) is None
+
+    # Text input
+    assert answerer.find_direct_answer(q, field_type="text") == "I can work here without any restrictions"
+
+    # Foreign work authorization questions strictly return None / UNKNOWN
+    foreign_questions = [
+        "What is your work authorization status for the US?*",
+        "What is your work authorization status for Canada?*",
+        "What is your work authorization status in the UK?*",
+        "What is your work authorization status in Germany?*",
+    ]
+    for fq in foreign_questions:
+        assert answerer.find_direct_answer(fq, field_type="text") is None
+        assert answerer.answer_question(fq, field_type="text") == "UNKNOWN"
+
+def test_total_experience_5_years():
+    """Verifies that all general experience patterns return 5, and per-skill questions return UNKNOWN."""
+    answerer = FormAnswerer()
+    patterns = [
+        "What is your total years of experience?",
+        "total years of professional experience",
+        "overall experience",
+        "total experience",
+        "total professional experience",
+        "overall years of experience",
+        "total work experience",
+    ]
+    for p in patterns:
+        assert answerer.find_direct_answer(p, field_type="text") == "5"
+        assert answerer.find_direct_answer(p, field_type="number") == "5"
+        assert answerer.answer_question(p, field_type="text") == "5"
+        assert answerer.answer_question(p, field_type="number") == "5"
+
+    # Per-skill years questions must return UNKNOWN / None
+    per_skill_q = [
+        "How many years of work experience do you have with React?",
+        "years of experience with Node.js",
+        "JavaScript experience in years",
+        "Python experience",
+    ]
+    for q in per_skill_q:
+        assert answerer.find_direct_answer(q, field_type="number") is None
+        assert answerer.answer_question(q, field_type="number") == "UNKNOWN"
+
+def test_relevant_experience_dropdown_5_6_years_and_missing_options():
+    """
+    Verifies that 'relevant work experience' selects '5-6 years' by exact match only.
+    If '5-6 years' is not in options, or if field_type is text/number, returns UNKNOWN.
+    """
+    answerer = FormAnswerer()
+    lbl = "How many years of relevant work experience do you have?*"
+
+    # Positive: '5-6 years' is offered
+    opts_with_5_6 = ["1-2 years", "3-4 years", "5-6 years", "7-10 years", "11+ years"]
+    assert answerer.find_direct_answer(lbl, field_type="dropdown", options=opts_with_5_6) == "5-6 years"
+    assert answerer.answer_question(lbl, field_type="dropdown", options=opts_with_5_6) == "5-6 years"
+
+    # Negative: '5-6 years' is NOT offered (NEEDS_INPUT, returns UNKNOWN)
+    opts_without_5_6 = ["1-2 years", "3-4 years", "7-10 years", "11+ years"]
+    assert answerer.find_direct_answer(lbl, field_type="dropdown", options=opts_without_5_6) is None
+    assert answerer.answer_question(lbl, field_type="dropdown", options=opts_without_5_6) == "UNKNOWN"
+
+    # Negative: field_type is text or number (NEEDS_INPUT, returns UNKNOWN)
+    assert answerer.find_direct_answer(lbl, field_type="text") is None
+    assert answerer.answer_question(lbl, field_type="text") == "UNKNOWN"
+    assert answerer.find_direct_answer(lbl, field_type="number") is None
+    assert answerer.answer_question(lbl, field_type="number") == "UNKNOWN"
+
+
+def test_join_terms_and_conditions_positive_and_negative(tmp_path):
+    """
+    Verifies CONSENT GUARD behavior:
+    - Any question containing consent keywords (agree, consent, terms, conditions, privacy, policy, etc.)
+      is blocked (returns None / UNKNOWN -> NEEDS_INPUT) UNLESS an entry has user_approved_consent: true,
+      the approval date, and exact question match.
+    - JOIN question is blocked without the user_approved_consent flag.
+    - JOIN question is answered with user_approved_consent: true and date.
+    - 'I agree to receive marketing emails' -> blocked (NEEDS_INPUT).
+    - 'Do you consent to the processing of your personal data?' -> blocked (NEEDS_INPUT).
+    - 'Are you comfortable working in a team?' -> not a consent question, still answered.
+    """
+    real_label = "Do you agree with the JOIN Terms & Conditions and have you read the Data Privacy Policy? *"
+
+    # 1. Without user_approved_consent flag (e.g. default answers.yaml where it was removed / unapproved)
+    answerer_default = FormAnswerer()
+    assert answerer_default.find_direct_answer(real_label, field_type="radio", options=["Yes"]) is None
+    assert answerer_default.answer_question(real_label, field_type="radio", options=["Yes"]) == "UNKNOWN"
+    assert answerer_default.find_direct_answer(real_label, field_type="checkbox", options=["Yes"]) is None
+    assert answerer_default.answer_question(real_label, field_type="checkbox", options=["Yes"]) == "UNKNOWN"
+
+    # 2. Blocked consent questions without approved flag:
+    assert answerer_default.find_direct_answer("I agree to receive marketing emails", field_type="radio", options=["Yes"]) is None
+    assert answerer_default.answer_question("I agree to receive marketing emails", field_type="radio", options=["Yes"]) == "UNKNOWN"
+    assert answerer_default.find_direct_answer("Do you consent to the processing of your personal data?", field_type="radio", options=["Yes"]) is None
+    assert answerer_default.answer_question("Do you consent to the processing of your personal data?", field_type="radio", options=["Yes"]) == "UNKNOWN"
+    assert answerer_default.find_direct_answer("Do you agree to the Terms and Conditions?", field_type="radio", options=["Yes"]) is None
+    assert answerer_default.answer_question("Do you agree to the Terms and Conditions?", field_type="radio", options=["Yes"]) == "UNKNOWN"
+    assert answerer_default.find_direct_answer("I have read the privacy policy", field_type="radio", options=["Yes"]) is None
+    assert answerer_default.answer_question("I have read the privacy policy", field_type="radio", options=["Yes"]) == "UNKNOWN"
+
+    # 3. Non-consent question: "Are you comfortable working in a team?" is still answered
+    team_ans = answerer_default.find_direct_answer("Are you comfortable working in a team?", field_type="radio", options=["Yes", "No"])
+    assert team_ans == "Yes"
+    assert answerer_default.answer_question("Are you comfortable working in a team?", field_type="radio", options=["Yes", "No"]) == "Yes"
+
+    # 4. With user_approved_consent: true, date, and exact_match: true -> JOIN question is answered
+    custom_answers = tmp_path / "answers_approved_consent.yaml"
+    custom_answers.write_text(f"""
+answers:
+  - patterns:
+      - "{real_label}"
+    value: "Yes"
+    exact_match: true
+    user_approved_consent: true
+    user_approved_date: "2026-10-22"
+    allowed_field_types: ["radio", "checkbox"]
+    require_options: ["Yes"]
+""", encoding="utf-8")
+    answerer_approved = FormAnswerer(answers_path=custom_answers)
+
+    # Answered when user_approved_consent: true is present and options are exactly ['Yes']
+    assert answerer_approved.find_direct_answer(real_label, field_type="radio", options=["Yes"]) == "Yes"
+    assert answerer_approved.answer_question(real_label, field_type="radio", options=["Yes"]) == "Yes"
+    assert answerer_approved.find_direct_answer(real_label, field_type="checkbox", options=["Yes"]) == "Yes"
+
+    # Same question with options Yes/No -> NEEDS_INPUT (None / UNKNOWN) due to require_options: ["Yes"]
+    assert answerer_approved.find_direct_answer(real_label, field_type="radio", options=["Yes", "No"]) is None
+    assert answerer_approved.answer_question(real_label, field_type="radio", options=["Yes", "No"]) == "UNKNOWN"
+
+    # Disallowed field types -> None / UNKNOWN
+    assert answerer_approved.find_direct_answer(real_label, field_type="text") is None
+    assert answerer_approved.answer_question(real_label, field_type="text") == "UNKNOWN"
+
+
+def test_overall_years_of_experience_as_backend_developer():
+    """
+    Verifies that 'Mention your Overall years of experience as Backend Developer .'
+    and its variations return '5 years 3 months' for text/textarea,
+    '5' for number inputs, and matches accepted options in dropdowns.
+    Other roles (e.g. Frontend Developer) return UNKNOWN -> NEEDS_INPUT.
+    """
+    answerer = FormAnswerer()
+    q_exact = "Mention your Overall years of experience as Backend Developer ."
+    variations = [
+        q_exact,
+        "Mention your Overall years of experience as Backend Developer",
+        "Overall years of experience as Backend Developer",
+        "overall years of experience as backend developer",
+        "years of experience as backend developer",
+        "years of experience as back end developer",
+    ]
+
+    for q in variations:
+        # Text fields return "5 years 3 months"
+        assert answerer.find_direct_answer(q, field_type="text") == "5 years 3 months"
+        assert answerer.answer_question(q, field_type="text") == "5 years 3 months"
+
+        # Number fields return "5"
+        assert answerer.find_direct_answer(q, field_type="number") == "5"
+        assert answerer.answer_question(q, field_type="number") == "5"
+
+        # Dropdowns select matching option
+        opts = ["1-2 years", "3-4 years", "5-6 years", "7+ years"]
+        assert answerer.find_direct_answer(q, field_type="dropdown", options=opts) == "5-6 years"
+        assert answerer.answer_question(q, field_type="dropdown", options=opts) == "5-6 years"
+
+    # Negative: Other role experience questions (e.g. Frontend Developer, DevOps) -> None / UNKNOWN
+    neg_questions = [
+        "Mention your Overall years of experience as Frontend Developer .",
+        "years of experience as DevOps Engineer",
+        "years of experience with React",
+    ]
+    for nq in neg_questions:
+        assert answerer.find_direct_answer(nq, field_type="text") is None
+        assert answerer.answer_question(nq, field_type="text") == "UNKNOWN"
+
+
+
+
 
 
 

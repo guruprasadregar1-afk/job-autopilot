@@ -231,3 +231,43 @@ def test_end_of_run_summary_details(capsys):
     assert "[Job ID: li-103] Follow Company: unchecked and verified" in captured
 
 
+def test_can_apply_to_company_7_days():
+    class MockDB:
+        def has_applied_to_company_recently(self, company, days=7):
+            from src.policy import normalize_company
+            if normalize_company(company) == "enterprise bot":
+                return True, "4476699604"
+            return False, None
+
+    mgr = GuardsManager(MockDB())
+    can_apply, reason = mgr.can_apply_to_company("Enterprise Bot LLC", days=7)
+    assert can_apply is False
+    assert "SAME_COMPANY_RECENTLY_APPLIED" in reason
+    assert "4476699604" in reason
+
+    can_apply_other, _ = mgr.can_apply_to_company("Google", days=7)
+    assert can_apply_other is True
+
+
+def test_end_of_run_prints_submitted_jobs(capsys):
+    db = FakeDB(count=0)
+    mgr = GuardsManager(db)
+
+    mgr.record_application_success(
+        platform="linkedin",
+        job_id="job-999",
+        title="Lead Full Stack Engineer",
+        company="Enterprise Bot",
+        url="https://www.linkedin.com/jobs/view/job-999/"
+    )
+
+    mgr.print_attempts_summary()
+    captured = capsys.readouterr().out
+
+    assert "Jobs Submitted in this Run:" in captured
+    assert "Lead Full Stack Engineer" in captured
+    assert "Enterprise Bot" in captured
+    assert "https://www.linkedin.com/jobs/view/job-999/" in captured
+
+
+

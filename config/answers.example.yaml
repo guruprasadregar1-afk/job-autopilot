@@ -20,8 +20,8 @@ answers:
       - "total professional experience"
       - "overall years of experience"
       - "total work experience"
-    value: "4.5"
-    numeric_value: 4.5
+    value: "5"
+    numeric_value: 5
 
   # Compensation
   - patterns:

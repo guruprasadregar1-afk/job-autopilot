@@ -77,7 +77,7 @@ def test_server_management_note_stored_verbatim_not_skill_with_years():
     ans = answerer.find_direct_answer("How many years of experience do you have in server management?", field_type="number")
     assert ans is None or ans == "UNKNOWN"
 
-def test_per_skill_years_return_unknown_and_total_experience_returns_4_5():
+def test_per_skill_years_return_unknown_and_total_experience_returns_5():
     answerer = FormAnswerer()
 
     # Per-skill years questions must all return None / UNKNOWN -> NEEDS_INPUT
@@ -87,11 +87,11 @@ def test_per_skill_years_return_unknown_and_total_experience_returns_4_5():
     assert answerer.find_direct_answer("Years of JavaScript experience", field_type="number") is None
     assert answerer.find_direct_answer("TypeScript experience", field_type="number") is None
 
-    # Total experience question must return 4.5
+    # Total experience question must return 5
     ans_total = answerer.find_direct_answer("What is your total years of experience?", field_type="number")
-    assert ans_total == "4.5"
+    assert ans_total == "5"
     ans_overall = answerer.find_direct_answer("Overall experience in years", field_type="number")
-    assert ans_overall == "4.5"
+    assert ans_overall == "5"
 
 def test_pending_resume_name_blocks_live_apply():
     from src.guards import ResumeMismatchHaltError

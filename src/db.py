@@ -422,6 +422,31 @@ class Database:
                 return row[0], row[1]
             return None, None
 
+    def has_applied_to_company_recently(self, company: str, days: int = 7) -> Tuple[bool, Optional[str]]:
+        """
+        Checks if an application has already been submitted to the same normalized company
+        within the last `days` days. Returns (has_applied, existing_job_id).
+        """
+        from src.policy import normalize_company
+        norm_target = normalize_company(company)
+        if not norm_target:
+            return False, None
+        cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT company, applied_at, job_id, title
+                FROM jobs
+                WHERE status IN ('APPLIED', 'UNVERIFIED')
+                  AND applied_at IS NOT NULL
+                  AND applied_at >= ?
+            """, (cutoff,))
+            rows = cursor.fetchall()
+            for r in rows:
+                if normalize_company(r[0]) == norm_target:
+                    return True, str(r[2])
+        return False, None
+
     def requeue_answered_needs_input_jobs(self, platform: str, answerer: Optional[Any] = None) -> List[str]:
         """
         Finds any jobs with status 'NEEDS_INPUT' whose pending_question now has an
@@ -454,15 +479,28 @@ class Database:
                 pending_q = str(row[1]).strip()
                 clean_q = re.sub(r"\s*\[type:\s*[^\]]+\]", "", pending_q).strip()
 
-                ans = answerer.find_direct_answer(clean_q, field_type="text")
+                meta_match = re.search(r"\[type:\s*([^,\]]+)(?:,\s*options:\s*([^\]]+))?\]", pending_q, re.IGNORECASE)
+                options_seen = None
+                ft = None
+                if meta_match:
+                    ft = meta_match.group(1).strip()
+                    if meta_match.group(2):
+                        options_seen = [o.strip() for o in meta_match.group(2).split(",") if o.strip()]
+
+                ans = None
+                if ft:
+                    ans = answerer.find_direct_answer(clean_q, field_type=ft, options=options_seen)
+
                 if not ans or ans == "UNKNOWN":
-                    ans = answerer.find_direct_answer(clean_q, field_type="dropdown")
+                    ans = answerer.find_direct_answer(clean_q, field_type="text")
+                if not ans or ans == "UNKNOWN":
+                    ans = answerer.find_direct_answer(clean_q, field_type="dropdown", options=options_seen)
                 if not ans or ans == "UNKNOWN":
                     ans = answerer.find_direct_answer(clean_q, field_type="textarea")
                 if not ans or ans == "UNKNOWN":
                     ans = answerer.find_direct_answer(clean_q, field_type="number")
                 if not ans or ans == "UNKNOWN":
-                    ans = answerer.find_direct_answer(clean_q, field_type="radio")
+                    ans = answerer.find_direct_answer(clean_q, field_type="radio", options=options_seen)
 
                 if ans and ans != "UNKNOWN":
                     # Pending question is now answered! Reset job to FOUND

@@ -417,6 +417,85 @@ def test_post_submit_confirmation_success_and_unverified():
         failure_reason="Confirmation not detected on page after submit"
     )
 
+def test_post_submit_replay_saved_snapshot_proves_applied(tmp_path):
+    """Replays real snapshot post_submit_linkedin_4467464995_1792648410.html and confirms PROVEN locators match APPLIED."""
+    from pathlib import Path
+    from playwright.sync_api import sync_playwright
+    from src.policy import verify_and_record_post_submit
+    from unittest.mock import MagicMock
+
+    snapshot_path = Path("docs/snapshots/post_submit_linkedin_4467464995_1792648410.html").resolve()
+    assert snapshot_path.exists()
+
+    db = MagicMock()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(snapshot_path.as_uri())
+
+        status = verify_and_record_post_submit(page, "linkedin", db, "4467464995")
+        assert status == "APPLIED"
+        db.update_job_status.assert_called_with(platform="linkedin", job_id="4467464995", status="APPLIED")
+        browser.close()
+
+def test_post_submit_replay_snapshot_without_proven_locators_records_unverified(tmp_path):
+    """Replays snapshot without PROVEN success locators and confirms fallback to UNVERIFIED and halt error."""
+    from playwright.sync_api import sync_playwright
+    from src.policy import verify_and_record_post_submit, UnverifiedApplicationHaltError
+    from unittest.mock import MagicMock
+
+    dummy_file = tmp_path / "post_submit_missing.html"
+    dummy_file.write_text("<html><body><h1>Job details</h1><p>Some random content</p></body></html>", encoding="utf-8")
+
+    db = MagicMock()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(dummy_file.resolve().as_uri())
+
+        with pytest.raises(UnverifiedApplicationHaltError):
+            verify_and_record_post_submit(page, "linkedin", db, "job-unverified")
+
+        db.update_job_status.assert_called_with(
+            platform="linkedin",
+            job_id="job-unverified",
+            status="UNVERIFIED",
+            failure_reason="Confirmation not detected on page after submit"
+        )
+        browser.close()
+
+def test_handle_post_apply_dialog_prints_and_dismisses(capsys):
+    """Verifies that handle_post_apply_dialog prints what the dialog offered and which button was clicked."""
+    from src.policy import handle_post_apply_dialog
+    from unittest.mock import MagicMock, patch
+
+    page = MagicMock()
+    dialogs = MagicMock()
+    dialog = MagicMock()
+    dialog.inner_text.return_value = "Let recruiters know you are Open to Work!"
+
+    dismiss_btn = MagicMock()
+    dismiss_btn.count.return_value = 1
+    dismiss_btn.get_attribute.return_value = "Dismiss"
+    dismiss_btn.inner_text.return_value = "Dismiss"
+
+    dialog.locator.return_value.first = dismiss_btn
+    dialogs.count.return_value = 1
+    dialogs.first = dialog
+    page.locator.return_value = dialogs
+
+    with patch("src.policy.SafeLocator") as MockSafeLoc:
+        res = handle_post_apply_dialog(page)
+        assert res == "dismissed"
+        MockSafeLoc.return_value.safe_click.assert_called_once()
+
+    captured = capsys.readouterr().out
+    assert "[POST-APPLY DIALOG] Detected dialog offering:" in captured
+    assert "Open to Work" in captured
+    assert "[POST-APPLY DIALOG] Allowed actions: Dismiss, Close, or Done." in captured
+    assert "[POST-APPLY DIALOG] Clicked button: 'Dismiss'" in captured
+
+
 def test_naukri_apply_blocked_even_when_observe_only_is_false():
     import src.policy as policy
     from src.policy import SafeLocator, PolicyBlockError
@@ -821,5 +900,35 @@ def test_ensure_clean_tabs_handles_tab_appearing_after_cleanup():
     ensure_clean_tabs(mock_context)
     restored_feed_page.close.assert_called_once()
     blank_page.close.assert_not_called()
+
+
+def test_normalize_company_name():
+    from src.policy import normalize_company
+
+    # 1. Enterprise Bot variations
+    assert normalize_company("Enterprise Bot") == "enterprise bot"
+    assert normalize_company("Enterprise Bot LLC") == "enterprise bot"
+    assert normalize_company("Enterprise Bot, Inc.") == "enterprise bot"
+    assert normalize_company("ENTERPRISE BOT") == "enterprise bot"
+    assert normalize_company("Enterprise\u200b Bot") == "enterprise bot"
+    assert normalize_company("Enterprise\u200c Bot\ufeff") == "enterprise bot"
+    assert normalize_company("Enterprise  Bot,   LLC") == "enterprise bot"
+
+    # 2. Jobgether variations
+    assert normalize_company("Jobgether") == "jobgether"
+    assert normalize_company("Jobgether Ltd") == "jobgether"
+    assert normalize_company("Jobgether Limited") == "jobgether"
+    assert normalize_company("JOBGETHER") == "jobgether"
+    assert normalize_company("Jobgether\ufeff") == "jobgether"
+    assert normalize_company("Jobgether\u00ad Inc.") == "jobgether"
+    assert normalize_company("Jobgether Pvt Ltd") == "jobgether"
+    assert normalize_company("Jobgether GmbH") == "jobgether"
+
+    # 3. Edge cases
+    assert normalize_company("") == ""
+    assert normalize_company(None) == ""
+    assert normalize_company("  Google, Inc.  ") == "google"
+    assert normalize_company("Microsoft Corporation") == "microsoft"
+
 
 

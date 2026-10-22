@@ -250,7 +250,7 @@ def run_pipeline(
     """
     from src.platforms.linkedin import LinkedInCollector, LinkedInApplicant
     from src.platforms.naukri import NaukriCollector
-    from src.policy import OBSERVE_ONLY, BrowserClosedCleanStop, is_browser_closed_error
+    from src.policy import OBSERVE_ONLY, BrowserClosedCleanStop, is_browser_closed_error, UnverifiedApplicationHaltError
 
     effective_rehearsal = bool(is_rehearsal or OBSERVE_ONLY)
     mode_desc = "REHEARSAL (SUBMIT IMPOSSIBLE)" if effective_rehearsal else "LIVE (REVIEW MODE)"
@@ -315,6 +315,8 @@ def run_pipeline(
         print("Exiting cleanly without retrying against quota. Run again after your quota resets.")
     except ResumeMismatchHaltError as e:
         print(f"\n[FATAL RESUME HALT STOP] {e}")
+    except UnverifiedApplicationHaltError:
+        print("\nApplication submitted, success not confirmed: UNVERIFIED. Check LinkedIn My Jobs -> Applied.")
     except (SafetyStopError, DailyCapReachedError, OutsideWorkingHoursError, SessionLimitExceededError, AttemptsLimitReachedError) as e:
         print(f"\n[SAFETY GUARD STOP] {e}")
     except Exception as e:
@@ -334,9 +336,43 @@ def run_pipeline(
         for status, count in counts.items():
             print(f"  - {status:25}: {count}")
 
+        print("\nJobs Submitted in this Run:")
+        if guards.submitted_jobs_in_run:
+            for job in guards.submitted_jobs_in_run:
+                u = job.get("url") or f"https://www.linkedin.com/jobs/view/{job.get('job_id')}/"
+                print(f"  - {job.get('title')} @ {job.get('company')} ({u})")
+        else:
+            print("  (None)")
+
         claude_calls = get_claude_call_count()
         print(f"\nTotal Claude CLI Calls Used: {claude_calls}")
         print("="*70 + "\n")
+
+def mark_applied_cmd(db: Database, job_id: str) -> None:
+    job = db.get_job_by_id(job_id)
+    if not job:
+        print(f"\n[ERROR] Job ID '{job_id}' not found in database.")
+        sys.exit(1)
+
+    current_status = job.get("status")
+    if current_status != "UNVERIFIED":
+        print(f"\n[REFUSAL] Job '{job_id}' status is '{current_status}'. mark-applied only accepts jobs in 'UNVERIFIED' status.")
+        sys.exit(1)
+
+    platform = job.get("platform", "linkedin")
+    title = job.get("title", "")
+    company = job.get("company", "")
+
+    db.update_job_status(platform=platform, job_id=job_id, status="APPLIED")
+    db.record_event(
+        platform=platform,
+        job_id=job_id,
+        event="MANUALLY_CONFIRMED",
+        old_status="UNVERIFIED",
+        new_status="APPLIED",
+        note="Manually confirmed applied by user"
+    )
+    print(f"\n[SUCCESS] Job {job_id} ('{title}' @ '{company}') marked as APPLIED with event MANUALLY_CONFIRMED.")
 
 def run_dry_run_8a(db: Database, guards: GuardsManager, matcher: JobMatcher, platform: str = "linkedin"):
     """Backward-compatible wrapper for Phase 8a dry-run."""
@@ -365,6 +401,9 @@ def main():
     dashboard_parser.add_argument("--serve", action="store_true", help="Serve dashboard using standard library HTTP server bound to 127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080, help="Port to serve dashboard on (default: 8080)")
 
+    mark_applied_parser = subparsers.add_parser("mark-applied", help="Manually confirm an UNVERIFIED application as APPLIED")
+    mark_applied_parser.add_argument("--job-id", type=str, required=True, help="Job ID to mark as APPLIED")
+
     args = parser.parse_args()
     db = Database()
     guards = GuardsManager(db)
@@ -383,6 +422,8 @@ def main():
         out = generate_dashboard()
         if args.serve:
             serve_dashboard(output_file=out, port=args.port)
+    elif args.command == "mark-applied":
+        mark_applied_cmd(db, args.job_id)
     elif args.command == "run":
         if args.rehearse and args.auto:
             print("\n[CONFIG ERROR] --rehearse cannot be combined with live mode (--auto).")

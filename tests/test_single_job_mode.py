@@ -25,6 +25,9 @@ def test_single_job_mode_existing_job_in_cli(monkeypatch, tmp_path):
     monkeypatch.setattr("src.main.Database", lambda: db)
     monkeypatch.setattr("builtins.input", lambda prompt="": "START")
 
+    mock_matcher = MagicMock()
+    mock_matcher.profile = {"resume": {"selected_filename": "Guru_Prasad.pdf"}}
+    monkeypatch.setattr("src.main.JobMatcher", lambda: mock_matcher)
     mock_run_pipeline = MagicMock()
     monkeypatch.setattr("src.main.run_pipeline", mock_run_pipeline)
 

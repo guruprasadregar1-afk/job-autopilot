@@ -3,7 +3,7 @@ import random
 import datetime
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Set
+from typing import Optional, Dict, Any, List, Set, Tuple
 import yaml
 
 class SafetyStopError(Exception):
@@ -57,6 +57,7 @@ class GuardsManager:
         self.needs_input_items: List[Dict[str, str]] = []
         self.failure_items: List[Dict[str, str]] = []
         self.review_reached_items: List[Dict[str, str]] = []
+        self.submitted_jobs_in_run: List[Dict[str, str]] = []
         self.consecutive_modal_not_detected: int = 0
         self.modal_not_detected_snapshots: List[str] = []
         self.set_max_attempts(max_attempts if max_attempts is not None else 10)
@@ -172,16 +173,50 @@ class GuardsManager:
         else:
             print("  (None)")
 
+        print("\nJobs Submitted in this Run:")
+        if self.submitted_jobs_in_run:
+            for job in self.submitted_jobs_in_run:
+                u = job.get("url") or (f"https://www.linkedin.com/jobs/view/{job.get('job_id')}/" if job.get("job_id") else "")
+                print(f"  - {job.get('title')} @ {job.get('company')} ({u})")
+        else:
+            print("  (None)")
+
         print("="*60 + "\n")
+
+    def can_apply_to_company(self, company: str, days: int = 7) -> Tuple[bool, str]:
+        """
+        Enforces at most one application per company per `days` days (default 7).
+        If already applied within the period, returns (False, 'SAME_COMPANY_RECENTLY_APPLIED').
+        """
+        if hasattr(self.db, "has_applied_to_company_recently"):
+            has_applied, prev_id = self.db.has_applied_to_company_recently(company, days=days)
+            if has_applied:
+                return False, f"SAME_COMPANY_RECENTLY_APPLIED (Already applied to '{company}' in job {prev_id} within {days} days)"
+        return True, ""
 
     def set_max_apply(self, max_apply: Optional[int]) -> None:
         """Sets max_apply limit for current session. Can only lower the daily cap."""
         self.max_apply = max_apply
 
-    def record_application_success(self, platform: str = "") -> None:
-        """Increments session applied count and resets consecutive failure counter."""
+    def record_application_success(
+        self,
+        platform: str = "",
+        job_id: str = "",
+        title: str = "",
+        company: str = "",
+        url: str = ""
+    ) -> None:
+        """Increments session applied count, tracks submitted job details, and resets consecutive failure counter."""
         self.session_applied_count += 1
         self.record_success()
+        u = url or (f"https://www.linkedin.com/jobs/view/{job_id}/" if platform == "linkedin" and job_id else "")
+        self.submitted_jobs_in_run.append({
+            "job_id": str(job_id),
+            "title": str(title),
+            "company": str(company),
+            "url": u,
+            "platform": platform
+        })
 
     def _load_settings(self) -> Dict[str, Any]:
         path = self.config_path

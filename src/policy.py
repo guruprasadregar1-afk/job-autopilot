@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 # Enforced during Phase 6c observation and Phase 8a collection.
 # Strictly blocks any LinkedIn Submit and Naukri Apply action.
 # Flipping this to False requires explicit written user approval.
-OBSERVE_ONLY: bool = True
+OBSERVE_ONLY: bool = False
 NAUKRI_APPLY_ENABLED: bool = False
 
 class PolicyBlockError(Exception):
@@ -39,6 +39,32 @@ def is_browser_closed_error(e: Exception) -> bool:
         or "target page, context or browser has been closed" in err_str
         or "session closed" in err_str
     )
+
+def normalize_company(name: str) -> str:
+    """
+    Normalizes company names to detect duplicate applications across variations:
+    - Strips invisible / zero-width characters (\u200b-\u200d, \ufeff, \u00ad).
+    - Replaces non-breaking spaces (\u00a0) and tabs with standard space.
+    - Converts to lowercase and strips leading/trailing whitespace.
+    - Strips common trailing legal entity suffixes: LLC, L.L.C., Inc, Inc., Ltd, Ltd.,
+      Limited, Pvt Ltd, Pvt. Ltd., Corp, Corp., Corporation, GmbH, Co., Co.
+    - Removes non-alphanumeric punctuation and collapses whitespace.
+    """
+    if not name:
+        return ""
+    # 1. Remove invisible / zero-width characters and soft hyphens
+    s = re.sub(r"[\u200b-\u200d\ufeff\u00ad]", "", str(name))
+    # 2. Replace non-breaking spaces and tabs with regular space
+    s = re.sub(r"[\u00a0\t\r\n]", " ", s)
+    # 3. Convert to lowercase
+    s = s.lower().strip()
+    # 4. Remove legal entity suffixes (e.g. LLC, Inc, Ltd, etc.) at end of company name
+    legal_suffix_pat = r",?\s*\b(llc|l\.l\.c\.|inc|inc\.|incorporated|corp|corp\.|corporation|ltd|ltd\.|limited|pvt\s*ltd|pvt\.\s*ltd\.|pvt|gmbh|co|co\.)\b\.?$"
+    s = re.sub(legal_suffix_pat, "", s, flags=re.IGNORECASE)
+    # 5. Remove any non-alphanumeric characters except whitespace
+    s = re.sub(r"[^\w\s]", " ", s)
+    # 6. Collapse multiple whitespace and strip
+    return re.sub(r"\s+", " ", s).strip()
 
 # ==============================================================================
 # ALLOWLISTED URL PATTERNS (Read-only operations & Apply flows only)
@@ -138,6 +164,9 @@ DENIED_ACTION_PATTERNS = [
     # External apply blocking (EXTERNAL_SITE is logged, never clicked)
     re.compile(r"\bapply on company (site|website)\b", re.IGNORECASE),
     re.compile(r"\bcompany[- ]site[- ]button\b", re.IGNORECASE),
+
+    # Safety reminder interstitial buttons (Never click "Review job post")
+    re.compile(r"\breview\s+job\s+post\b", re.IGNORECASE),
 
     # Upload actions (Uploading new resume/cover letter is strictly forbidden; select existing only)
     re.compile(r"\bupload\b", re.IGNORECASE),
@@ -282,7 +311,7 @@ class PolicyEngine:
         raise PolicyBlockError(f"Navigation blocked by default-deny policy: URL '{url}' is not on the allowlist.")
 
     @staticmethod
-    def validate_action(action_type: str, text: str = "", selector: str = "", is_form_field: bool = False, is_job_card: bool = False) -> None:
+    def validate_action(action_type: str, text: str = "", selector: str = "", is_form_field: bool = False, is_job_card: bool = False, is_uncheck_follow: bool = False) -> None:
         """
         Validates click, fill, check, or press actions against forbidden and allowlisted terms.
         Matching is performed against control accessible text (visible text, aria-label)
@@ -366,10 +395,16 @@ class PolicyEngine:
         target_to_check = f"{action_text_to_check} {clean_sel}".strip()
 
         for pattern in DENIED_ACTION_PATTERNS:
-            # Explicit exemption: unchecking follow checkboxes is allowed
-            if action_type == "uncheck" and pattern.pattern == r"\bfollow\b":
-                continue
             if pattern.search(target_to_check):
+                # Explicit exemption: only unchecking actions on the follow-company control are allowed.
+                # Any action that would CHECK the box (action_type == 'check' or without is_uncheck_follow) remains strictly blocked.
+                if pattern.pattern in (r"\bfollow\b", r"\bunfollow\b"):
+                    if action_type == "check":
+                        raise PolicyBlockError(f"Action 'check' blocked on forbidden target matching pattern '{pattern.pattern}': {text}")
+                    if is_uncheck_follow and action_type in ("uncheck", "click", "press", "focus"):
+                        continue
+                    if action_type == "uncheck":
+                        continue
                 raise PolicyBlockError(f"Action '{action_type}' blocked on forbidden target matching pattern '{pattern.pattern}': {text}")
 
         # 4. Social buttons denylist:
@@ -414,13 +449,14 @@ class SafeLocator:
     Wraps Playwright Locator to intercept all actions through PolicyEngine.
     Safe methods (safe_click, safe_fill, etc.) must be used.
     """
-    def __init__(self, locator, selector_hint: str = "", is_form_field: bool = False, is_job_card: bool = False, dialog_text: str = "", is_post_apply: bool = False):
+    def __init__(self, locator, selector_hint: str = "", is_form_field: bool = False, is_job_card: bool = False, dialog_text: str = "", is_post_apply: bool = False, is_uncheck_follow: bool = False):
         self._locator = locator
         self.selector_hint = selector_hint
         self.is_form_field = is_form_field
         self.is_job_card = is_job_card
         self.dialog_text = dialog_text
         self.is_post_apply = is_post_apply
+        self.is_uncheck_follow = is_uncheck_follow
 
     def _get_target_text(self) -> str:
         """
@@ -484,7 +520,8 @@ class SafeLocator:
             text=text,
             selector=selector,
             is_form_field=self.is_form_field,
-            is_job_card=self.is_job_card
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
         )
         try:
             from src.browser import record_browser_action
@@ -504,7 +541,8 @@ class SafeLocator:
             text=text,
             selector=selector,
             is_form_field=True,
-            is_job_card=self.is_job_card
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
         )
         try:
             from src.browser import record_browser_action
@@ -524,7 +562,8 @@ class SafeLocator:
             text=text,
             selector=selector,
             is_form_field=self.is_form_field,
-            is_job_card=self.is_job_card
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
         )
         return self._locator.check(**kwargs)
 
@@ -539,7 +578,8 @@ class SafeLocator:
             text=text,
             selector=selector,
             is_form_field=self.is_form_field,
-            is_job_card=self.is_job_card
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
         )
         return self._locator.uncheck(**kwargs)
 
@@ -554,9 +594,27 @@ class SafeLocator:
             text=text,
             selector=selector,
             is_form_field=self.is_form_field,
-            is_job_card=self.is_job_card
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
         )
         return self._locator.press(key, **kwargs)
+
+    def safe_focus(self, **kwargs):
+        text = self._get_target_text()
+        selector = self._get_element_identifiers()
+        dialog_ctx = self.dialog_text or self._get_enclosing_dialog_text()
+        if dialog_ctx:
+            PolicyEngine.validate_modal_action(dialog_ctx, action_text=text, selector=selector, is_post_apply=self.is_post_apply)
+        PolicyEngine.validate_action(
+            "focus",
+            text=text,
+            selector=selector,
+            is_form_field=self.is_form_field,
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
+        )
+        if hasattr(self._locator, "focus"):
+            return self._locator.focus(**kwargs)
 
     def safe_select_option(self, value=None, label=None, **kwargs):
         text = self._get_target_text()
@@ -569,7 +627,8 @@ class SafeLocator:
             text=text,
             selector=selector,
             is_form_field=True,
-            is_job_card=self.is_job_card
+            is_job_card=self.is_job_card,
+            is_uncheck_follow=self.is_uncheck_follow
         )
         if label is not None:
             return self._locator.select_option(label=label, **kwargs)
@@ -581,7 +640,7 @@ class SafeLocator:
     def safe_uncheck_and_verify(self) -> None:
         """
         Unchecks an opt-in checkbox and re-verifies state.
-        Handles visually-hidden inputs by attempting force uncheck or force click.
+        Handles visually-hidden inputs by attempting force uncheck, force click, or Space press.
         Raises PolicyBlockError if it remains checked.
         """
         if self._locator.is_checked():
@@ -594,8 +653,15 @@ class SafeLocator:
                     self._locator.click(force=True, timeout=1500)
                 except Exception:
                     pass
-            if self._locator.is_checked():
-                raise PolicyBlockError("Mandatory opt-in uncheck failed: checkbox remains checked!")
+                if self._locator.is_checked():
+                    try:
+                        if hasattr(self._locator, "focus"):
+                            self._locator.focus()
+                        self._locator.press("Space", timeout=1500)
+                    except Exception:
+                        pass
+                if self._locator.is_checked():
+                    raise PolicyBlockError("Mandatory opt-in uncheck failed: checkbox remains checked!")
 
     # Standard wrapper aliases
     def click(self, **kwargs):
@@ -613,6 +679,9 @@ class SafeLocator:
     def press(self, key: str, **kwargs):
         return self.safe_press(key, **kwargs)
 
+    def focus(self, **kwargs):
+        return self.safe_focus(**kwargs)
+
     def select_option(self, *args, **kwargs):
         return self.safe_select_option(*args, **kwargs)
 
@@ -624,14 +693,14 @@ class SafeLocator:
 
     @property
     def first(self) -> "SafeLocator":
-        return SafeLocator(self._locator.first, selector_hint=self.selector_hint, is_form_field=self.is_form_field, is_job_card=self.is_job_card, dialog_text=self.dialog_text)
+        return SafeLocator(self._locator.first, selector_hint=self.selector_hint, is_form_field=self.is_form_field, is_job_card=self.is_job_card, dialog_text=self.dialog_text, is_uncheck_follow=self.is_uncheck_follow)
 
     @property
     def last(self) -> "SafeLocator":
-        return SafeLocator(self._locator.last, selector_hint=self.selector_hint, is_form_field=self.is_form_field, is_job_card=self.is_job_card, dialog_text=self.dialog_text)
+        return SafeLocator(self._locator.last, selector_hint=self.selector_hint, is_form_field=self.is_form_field, is_job_card=self.is_job_card, dialog_text=self.dialog_text, is_uncheck_follow=self.is_uncheck_follow)
 
     def nth(self, index: int) -> "SafeLocator":
-        return SafeLocator(self._locator.nth(index), selector_hint=self.selector_hint, is_form_field=self.is_form_field, is_job_card=self.is_job_card, dialog_text=self.dialog_text)
+        return SafeLocator(self._locator.nth(index), selector_hint=self.selector_hint, is_form_field=self.is_form_field, is_job_card=self.is_job_card, dialog_text=self.dialog_text, is_uncheck_follow=self.is_uncheck_follow)
 
     def __getattr__(self, name):
         return getattr(self._locator, name)
@@ -717,13 +786,28 @@ def verify_and_record_post_submit(page, platform: str, db, job_id: str) -> str:
 
     confirmed = False
     if platform == "linkedin":
-        success_loc = page.locator(
+        # PROVEN (derived directly from live run snapshot docs/snapshots/post_submit_linkedin_4467464995_1792648410.html):
+        # On modern LinkedIn SDUI layout, after submission the Easy Apply dialog closes,
+        # and the job details page itself displays an "Application status" section with "Application submitted".
+        # PROVEN 1: h2:has-text('Application status')
+        # PROVEN 2: p:has-text('Application submitted')
+        # PROVEN 3: [componentkey='goToCompanySiteComponentKey']
+        # Legacy modal/dialog fallbacks:
+        # 4: div[role='dialog']:has-text('Application sent')
+        # 5: div[role='dialog']:has-text('Application submitted')
+        # 6: div.artdeco-modal:has-text('Application sent')
+        # 7: span:has-text('Your application was sent to')
+        proven_success_loc = page.locator(
+            "h2:has-text('Application status'), "
+            "p:has-text('Application submitted'), "
+            "[componentkey='goToCompanySiteComponentKey'], "
             "div[role='dialog']:has-text('Application sent'), "
+            "div[role='dialog']:has-text('Application submitted'), "
             "h3:has-text('Application submitted'), "
             "span:has-text('Your application was sent to'), "
             "div.artdeco-modal:has-text('Application sent')"
         )
-        confirmed = (success_loc.count() > 0)
+        confirmed = (proven_success_loc.count() > 0)
     elif platform == "naukri":
         success_loc = page.locator(
             "div.apply-message:has-text('applied successfully'), "
@@ -780,6 +864,8 @@ def handle_post_apply_dialog(page) -> Optional[str]:
         dialog_text = str(val).strip() if val and not str(val).startswith("<MagicMock") else ""
 
         if is_sensitive_modal(dialog_text, is_post_apply=True):
+            print(f"[POST-APPLY DIALOG] Detected dialog offering: '{dialog_text[:200]}'")
+            print("[POST-APPLY DIALOG] Allowed actions: Dismiss, Close, or Done.")
             dismiss_btn = dialog.locator(
                 "button[aria-label='Dismiss'], button[aria-label='Close'], "
                 "button.artdeco-modal__dismiss, button:has-text('Dismiss'), "
@@ -793,6 +879,12 @@ def handle_post_apply_dialog(page) -> Optional[str]:
             except Exception:
                 pass
             if btn_cnt > 0:
+                clicked_label = ""
+                try:
+                    clicked_label = dismiss_btn.get_attribute("aria-label") or dismiss_btn.inner_text() or "Dismiss"
+                except Exception:
+                    clicked_label = "Dismiss"
+                print(f"[POST-APPLY DIALOG] Clicked button: '{str(clicked_label).strip()}'")
                 SafeLocator(dismiss_btn, selector_hint="Dismiss modal button", dialog_text=dialog_text, is_post_apply=True).safe_click()
                 return "dismissed"
     except PolicyBlockError:

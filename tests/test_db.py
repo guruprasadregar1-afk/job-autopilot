@@ -127,7 +127,7 @@ answers:
   - patterns:
       - "linkedin profile"
       - "linkedin profile url"
-    value: "https://www.linkedin.com/in/guru-prasad-769b99227324"
+    value: "https://www.linkedin.com/in/guru-prasad-769b99227"
     exact_match: true
 """, encoding="utf-8")
     updated_answerer = FormAnswerer(answers_path=ans_file)
@@ -146,4 +146,141 @@ answers:
         assert row[0] == "FOUND"
         assert row[1] == 0
         assert row[2] == ""
+
+
+def test_get_eligible_found_jobs_requeues_join_terms_with_options_metadata(temp_db, tmp_path):
+    from src.answerer import FormAnswerer
+
+    temp_db.record_job(
+        platform="linkedin",
+        job_id="4476699604",
+        title="Full Stack Engineer",
+        company="Enterprise Bot",
+        status="NEEDS_INPUT",
+        pending_question="Do you agree with the JOIN Terms & Conditions and have you read the Data Privacy Policy? * [type: radio, options: Yes]"
+    )
+
+    ans_file = tmp_path / "answers.yaml"
+    ans_file.write_text("""
+answers:
+  - patterns:
+      - "Do you agree with the JOIN Terms & Conditions and have you read the Data Privacy Policy? *"
+    value: "Yes"
+    allowed_field_types:
+      - "radio"
+      - "checkbox"
+    require_options:
+      - "Yes"
+    exact_match: true
+    user_approved_consent: true
+    user_approved_date: "2026-10-22"
+""", encoding="utf-8")
+    answerer = FormAnswerer(answers_path=ans_file)
+
+    eligible = temp_db.get_eligible_found_jobs("linkedin", answerer=answerer)
+    assert any(j["job_id"] == "4476699604" for j in eligible)
+
+    with temp_db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, failure_count, pending_question FROM jobs WHERE job_id = '4476699604'")
+        row = cursor.fetchone()
+        assert row[0] == "FOUND"
+        assert row[1] == 0
+        assert row[2] == ""
+
+
+def test_has_applied_to_company_recently_and_normalization(temp_db):
+    import datetime
+
+    # Record an application for Enterprise Bot 2 days ago
+    two_days_ago = (datetime.datetime.now() - datetime.timedelta(days=2)).isoformat()
+    temp_db.record_job(
+        platform="linkedin",
+        job_id="job-eb-1",
+        title="Senior Full Stack Developer",
+        company="Enterprise Bot LLC",
+        status="APPLIED"
+    )
+    with temp_db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE jobs SET applied_at = ? WHERE job_id = 'job-eb-1'", (two_days_ago,))
+
+    # Record an application for Jobgether 10 days ago (outside 7 day window)
+    ten_days_ago = (datetime.datetime.now() - datetime.timedelta(days=10)).isoformat()
+    temp_db.record_job(
+        platform="linkedin",
+        job_id="job-jg-1",
+        title="Full Stack Developer",
+        company="Jobgether Ltd",
+        status="APPLIED"
+    )
+    with temp_db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE jobs SET applied_at = ? WHERE job_id = 'job-jg-1'", (ten_days_ago,))
+
+    # 1. Enterprise Bot variations within 7 days -> detected
+    applied_eb1, prev_id1 = temp_db.has_applied_to_company_recently("Enterprise Bot", days=7)
+    assert applied_eb1 is True
+    assert prev_id1 == "job-eb-1"
+
+    applied_eb2, prev_id2 = temp_db.has_applied_to_company_recently("enterprise bot, inc.", days=7)
+    assert applied_eb2 is True
+    assert prev_id2 == "job-eb-1"
+
+    applied_eb3, prev_id3 = temp_db.has_applied_to_company_recently("Enterprise\u200b Bot", days=7)
+    assert applied_eb3 is True
+    assert prev_id3 == "job-eb-1"
+
+    # 2. Jobgether was 10 days ago -> NOT within 7 days
+    applied_jg, prev_jg = temp_db.has_applied_to_company_recently("Jobgether", days=7)
+    assert applied_jg is False
+    assert prev_jg is None
+
+    # But within 14 days, Jobgether IS detected
+    applied_jg14, prev_jg14 = temp_db.has_applied_to_company_recently("Jobgether", days=14)
+    assert applied_jg14 is True
+    assert prev_jg14 == "job-jg-1"
+
+    # 3. Different company -> not applied
+    applied_other, _ = temp_db.has_applied_to_company_recently("Google LLC", days=7)
+    assert applied_other is False
+
+
+
+def test_get_eligible_found_jobs_requeues_backend_developer_experience(temp_db, tmp_path):
+    from src.answerer import FormAnswerer
+
+    temp_db.record_job(
+        platform="linkedin",
+        job_id="4481311145",
+        title="Back End Developer",
+        company="Third Wave Coffee",
+        status="NEEDS_INPUT",
+        pending_question="Mention your Overall years of experience as Backend Developer ."
+    )
+
+    ans_file = tmp_path / "answers.yaml"
+    ans_file.write_text("""
+answers:
+  - patterns:
+      - "Mention your Overall years of experience as Backend Developer ."
+    value: "5 years 3 months"
+    text_value: "5 years 3 months"
+    numeric_value: 5
+    exact_match: true
+""", encoding="utf-8")
+    answerer = FormAnswerer(answers_path=ans_file)
+
+    eligible = temp_db.get_eligible_found_jobs("linkedin", answerer=answerer)
+    assert any(j["job_id"] == "4481311145" for j in eligible)
+
+    with temp_db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT status, failure_count, pending_question FROM jobs WHERE job_id = '4481311145'")
+        row = cursor.fetchone()
+        assert row[0] == "FOUND"
+        assert row[1] == 0
+        assert row[2] == ""
+
+
 

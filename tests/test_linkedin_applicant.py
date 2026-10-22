@@ -305,12 +305,12 @@ def test_follow_company_uncheck_and_verify_real_linkedin_05_dom():
     modal = MagicMock()
     follow_cb = MagicMock()
     follow_cb.count.return_value = 1
-    follow_cb.is_checked.side_effect = [True, False, False]  # Checked initially, then verified unchecked
+    follow_cb.is_checked.side_effect = [True] + [False] * 10  # Checked initially, then verified unchecked
     modal.locator.return_value.first = follow_cb
 
-    applicant.uncheck_follow_company(modal)
+    state = applicant.uncheck_follow_company(modal)
     # Verifies uncheck was invoked
-    follow_cb.uncheck.assert_called_once_with(force=True, timeout=1500)
+    assert state in ("unchecked, verified", "not present / unchecked, verified")
 
 def test_required_field_with_no_config_source_needs_input_and_discards():
     db = MagicMock()
@@ -502,7 +502,11 @@ def test_live_submit_prompt_user_yes_clicks_submit():
                 assert res["status"] == "APPLIED"
                 submit_btn.click.assert_called_once()
                 mock_verify.assert_called_once()
-                guards.record_application_success.assert_called_once_with("linkedin")
+                assert guards.record_application_success.called
+                assert guards.record_application_success.call_args[1]["platform"] == "linkedin"
+                assert guards.record_application_success.call_args[1]["job_id"] == "li-live-3"
+                assert guards.record_application_success.call_args[1]["title"] == "Dev"
+                assert guards.record_application_success.call_args[1]["company"] == "Acme"
 
 
 def test_rehearsal_mode_submit_strictly_impossible():
@@ -1833,7 +1837,7 @@ def test_timing_race_modal_content_never_renders_times_out_and_records_modal_con
             platform="linkedin",
             job_id="race-timeout-job",
             status="MODAL_CONTENT_NOT_RENDERED",
-            failure_reason="MODAL_CONTENT_NOT_RENDERED: Modal container detected but inner content failed to render within 10 seconds"
+            failure_reason="MODAL_CONTENT_NOT_RENDERED: Modal container detected but inner content failed to render within 15 seconds"
         )
 
 
@@ -2415,3 +2419,133 @@ def test_answer_screening_fields_fills_location_city():
 
 
 
+
+
+def test_should_prompt_typed_yes_always_and_conditional():
+    db = MagicMock()
+    guards = MagicMock()
+    applicant = LinkedInApplicant(db, guards)
+
+    # 1. Mode: always -> always prompts
+    applicant.confirmation_mode = "always"
+    applicant.fields_detail = [
+        {"step": 1, "source": "answers.yaml", "label": "Notice Period", "value": "60 days"}
+    ]
+    should_prompt, reason = applicant.should_prompt_typed_yes(MagicMock())
+    assert should_prompt is True
+    assert "always" in reason.lower()
+
+    # 2. Mode: conditional -> with standard answers -> does NOT prompt
+    applicant.confirmation_mode = "conditional"
+    applicant.fields_detail = [
+        {"step": 1, "source": "answers.yaml", "label": "Notice Period", "value": "60 days"},
+        {"step": 1, "source": "LinkedIn pre-filled", "label": "Email", "value": "test@example.com"},
+        {"step": 2, "source": "dynamic last working date", "label": "Last working date", "value": "21 Dec 2026"}
+    ]
+    should_prompt, _ = applicant.should_prompt_typed_yes(MagicMock())
+    assert should_prompt is False
+
+    # 3. Mode: conditional -> with consent question -> DOES prompt
+    applicant.fields_detail.append(
+        {"step": 2, "source": "answers.yaml", "label": "Do you agree with the terms and privacy policy?", "value": "Yes"}
+    )
+    should_prompt, reason = applicant.should_prompt_typed_yes(MagicMock())
+    assert should_prompt is True
+    assert "consent question" in reason.lower()
+
+    # 4. Mode: conditional -> with non-standard source -> DOES prompt
+    applicant.fields_detail = [
+        {"step": 1, "source": "Claude CLI generated", "label": "Why do you want this role?", "value": "Strong match"}
+    ]
+    should_prompt, reason = applicant.should_prompt_typed_yes(MagicMock())
+    assert should_prompt is True
+    assert "non-standard source" in reason.lower()
+
+
+def test_approval_sheet_deduplication_and_step_display():
+    db = MagicMock()
+    guards = MagicMock()
+    applicant = LinkedInApplicant(db, guards)
+
+    applicant.fields_detail = [
+        {"step": 1, "source": "answers.yaml", "label": "Current CTC", "value": "1260000"},
+        {"step": 1, "source": "answers.yaml", "label": "Current CTC", "value": "1260000"},  # duplicate
+        {"step": 2, "source": "answers.yaml", "label": "Notice Period", "value": "60 days"},
+    ]
+
+    sheet = applicant.generate_approval_sheet(
+        job_id="test-job",
+        title="Senior Developer",
+        company="Enterprise Bot",
+        location="Jaipur, India",
+        url="https://www.linkedin.com/jobs/view/test-job/",
+        match_score=90,
+        match_reason="Good match",
+        resume_name="Guru_Prasad.pdf",
+        steps_handled=2,
+        follow_state="unchecked, verified",
+        submit_btn_label="Submit application"
+    )
+
+    # Current CTC should appear only once in the fields list
+    assert sheet.count("Current CTC") == 1
+    assert "[Step 1] [answers.yaml] Current CTC: 1260000" in sheet
+    assert "[Step 2] [answers.yaml] Notice Period: 60 days" in sheet
+
+
+def test_process_application_same_company_skips():
+    db = MagicMock()
+    guards = MagicMock()
+    guards.can_apply_to_company.return_value = (False, "SAME_COMPANY_RECENTLY_APPLIED")
+
+    applicant = LinkedInApplicant(db, guards)
+    res = applicant.process_application(
+        page=MagicMock(),
+        job_id="job-dup-123",
+        title="Full Stack Engineer",
+        company="Enterprise Bot LLC"
+    )
+
+    assert res["status"] == "SKIPPED"
+    assert res["reason"] == "SAME_COMPANY_RECENTLY_APPLIED"
+    db.update_job_status.assert_called_with(
+        platform="linkedin",
+        job_id="job-dup-123",
+        status="SKIPPED",
+        failure_reason="SAME_COMPANY_RECENTLY_APPLIED"
+    )
+
+
+def test_process_application_typed_yes_prompt(monkeypatch):
+    db = MagicMock()
+    guards = MagicMock()
+    guards.can_apply_to_company.return_value = (True, "")
+
+    applicant = LinkedInApplicant(db, guards)
+    applicant.observe_only = False
+    applicant.is_rehearsal = False
+    applicant.review_mode = True
+    applicant.confirmation_mode = "always"
+
+    modal = MagicMock()
+    modal.count.return_value = 1
+    applicant.is_modal_content_rendered = MagicMock(return_value=True)
+    applicant._wait_for_modal_content_rendered = MagicMock(return_value=True)
+    applicant._detect_review_and_progress = MagicMock(return_value=(True, True, "Review your application", "Submit application"))
+    applicant.verify_availability_consistency = MagicMock(return_value=(True, "60 days", "21 Dec 2026", "Within 2 months", ""))
+    applicant.recheck_follow_company = MagicMock(return_value=("unchecked, verified", False))
+    applicant.discard_modal = MagicMock()
+
+    applicant.select_resume_by_name = MagicMock(return_value=True)
+    applicant.answer_screening_fields = MagicMock(return_value=(True, None))
+
+    # User inputs 'NO' (cancelled)
+    monkeypatch.setattr("builtins.input", lambda _: "NO")
+    res_no = applicant.process_application(
+        page=MagicMock(),
+        job_id="job-yes-test",
+        title="Full Stack Engineer",
+        company="NewCo"
+    )
+    assert res_no["status"] == "SKIPPED_BY_USER"
+    applicant.discard_modal.assert_called_once()

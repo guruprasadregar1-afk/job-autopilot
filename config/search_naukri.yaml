@@ -4,11 +4,6 @@ platform: "naukri"
 searches:
   - keywords: "Senior Full Stack Developer"
     locations:
-      - "Bengaluru"
-      - "Pune"
-      - "Hyderabad"
-      - "Gurgaon"
-      - "Noida"
       - "Jaipur"
     experience_min: 4         # added by agent
     experience_max: 7         # added by agent
@@ -16,11 +11,6 @@ searches:
 
   - keywords: "MERN Stack Developer"
     locations:
-      - "Bengaluru"
-      - "Pune"
-      - "Hyderabad"
-      - "Gurgaon"
-      - "Noida"
       - "Jaipur"
     experience_min: 4         # added by agent
     experience_max: 7         # added by agent
@@ -28,11 +18,6 @@ searches:
 
   - keywords: "React Node Developer"
     locations:
-      - "Bengaluru"
-      - "Pune"
-      - "Hyderabad"
-      - "Gurgaon"
-      - "Noida"
       - "Jaipur"
     experience_min: 4         # added by agent
     experience_max: 7         # added by agent
